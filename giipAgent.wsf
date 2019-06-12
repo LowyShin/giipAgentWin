@@ -1,4 +1,5 @@
 <job id="giipAgent ver 1.52">
+<script language="VBScript" src="giipAgent.cfg"></script>
 <script language="VBScript">
 ' -------------------------------------------------------------
 ' Authorized by Lowy at 20160805
