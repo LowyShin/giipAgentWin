@@ -18,8 +18,6 @@
 On Error Resume Next
 scrver = 1.52
 ' User Variables 
-at = "d27f9d4be6e9674605844275903fd468"
-lsSn = 70935
 
 strComputer = "." 
 Set objWMIService = GetObject("winmgmts:\\" & strComputer & "\root\CIMV2") 
