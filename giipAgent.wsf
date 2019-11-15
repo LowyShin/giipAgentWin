@@ -1,5 +1,5 @@
 <job id="giipAgent ver 1.52">
-<script language="VBScript" src="giipAgent.cfg"></script>
+<script language="VBScript" src="../giipAgent.cfg"></script>
 <script language="VBScript">
 ' -------------------------------------------------------------
 ' Authorized by Lowy at 20160805
@@ -31,8 +31,8 @@ Next
 
 ' -------------------------------------------------------------
 ' System Variables
-lwURLAPI = "http://giipapi.littleworld.net/api/cqe/queue/get04?sk={{sk}}&lssn={{lssn}}&os=" & OSName & "&df=os&sv=" & scrver
-lwPath = "."
+lwURLAPI = "https://giipaspstg02.azurewebsites.net/api/cqe/cqequeueget04.asp?sk={{sk}}&lssn={{lssn}}&os=" & OSName & "&df=os&sv=" & scrver
+lwPathLog = "../giipLogs"
 lwLogFileName = "giipAgent_" & SetDtToStr(now(), "YYYYMMDD") & ".log"
 
 ' -------------------------------------------------------------
@@ -42,13 +42,20 @@ lwPath= oWshShell.CurrentDirectory
 lwURLAPI = replace(lwURLAPI, "{{sk}}", at)
 lwURLAPI = replace(lwURLAPI, "{{lssn}}", lsSn)
 
+Set oFSO = CreateObject("Scripting.FileSystemObject")
+If Not oFSO.FolderExists(lwPathLog) Then
+  oFSO.CreateFolder lwPathLog
+End If
+
 ' Get & Execute Scripts
 'msgbox lwURLAPI
 lwHTTPRst = lwGetHTTP (lwURLAPI, "GET", "", "utf-8", "text")
 
-lwLogFileWrite lwPath, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Check from giip SQE..." & lwScrType & vbCRLF
+lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] " & lwURLAPI & vbCRLF
+lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Check from giip SQE..." & lwScrType & vbCRLF
+
 lpi = 0
-do while lwHTTPRst <> empty and lpi < 10
+do while lwHTTPRst <> empty and lpi < 1
 
 	aryHTTPRst = split(lwHTTPRst, "||")
 
@@ -59,9 +66,9 @@ do while lwHTTPRst <> empty and lpi < 10
 		lwScriptBody = replace(lwScriptBody , "{{sk}}", at)
 		lwScriptBody = replace(lwScriptBody , "{{lssn}}", lsSn)
 		ExecQue lwPath, lwScriptBody
-		lwLogFileWrite lwPath, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Que Executed!! qsn:" & lwScrSn & " Script Type:" & lwScrType & vbCRLF
+		lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Que Executed!! qsn:" & lwScrSn & " Script Type:" & lwScrType & vbCRLF
 	else
-		lwLogFileWrite lwPath, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] (" & ubound(aryHTTPRst) & ")" & lwHTTPRst & vbCRLF
+		lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] (" & ubound(aryHTTPRst) & ")" & lwHTTPRst & vbCRLF
 	end if
 
 	lwHTTPRst = lwGetHTTP (lwURLAPI, "GET", "", "utf-8", "text")
