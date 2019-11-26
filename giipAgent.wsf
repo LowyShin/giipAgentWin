@@ -26,12 +26,13 @@ Set objWMIService = GetObject("winmgmts:\\" & strComputer & "\root\CIMV2")
 Set colItems = objWMIService.ExecQuery( _
     "SELECT * FROM Win32_OperatingSystem",,48) 
 For Each objItem in colItems 
-    OSName = objItem.Caption
+	OSName = objItem.Caption
+	HostName = objItem.CSName
 Next
 
 ' -------------------------------------------------------------
 ' System Variables
-lwURLAPI = "https://giipaspstg02.azurewebsites.net/api/cqe/cqequeueget04.asp?sk={{sk}}&lssn={{lssn}}&os=" & OSName & "&df=os&sv=" & scrver
+lwURLAPI = "https://giipaspstg02.azurewebsites.net/api/cqe/cqequeueget04.asp?sk={{sk}}&lssn={{lssn}}&hn=" & hostname & "&os=" & OSName & "&df=os&sv=" & scrver
 lwPathLog = "../giipLogs"
 lwLogFileName = "giipAgent_" & SetDtToStr(now(), "YYYYMMDD") & ".log"
 
@@ -42,9 +43,9 @@ lwPath= oWshShell.CurrentDirectory
 lwURLAPI = replace(lwURLAPI, "{{sk}}", at)
 lwURLAPI = replace(lwURLAPI, "{{lssn}}", lsSn)
 
-Set oFSO = CreateObject("Scripting.FileSystemObject")
-If Not oFSO.FolderExists(lwPathLog) Then
-  oFSO.CreateFolder lwPathLog
+Set lwFso = CreateObject("Scripting.FileSystemObject")
+If Not lwFso.FolderExists(lwPathLog) Then
+	lwFso.CreateFolder lwPathLog
 End If
 
 ' Get & Execute Scripts
@@ -54,26 +55,51 @@ lwHTTPRst = lwGetHTTP (lwURLAPI, "GET", "", "utf-8", "text")
 lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] " & lwURLAPI & vbCRLF
 lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Check from giip SQE..." & lwScrType & vbCRLF
 
-lpi = 0
-do while lwHTTPRst <> empty and lpi < 1
+' 20191115 Lowy
+' auto add new machine
+msgbox lwHTTPRst
+if isnumeric(lwHTTPRst) then
+	If Not lwFso.FileExists(lwPath & "../giipAgent.cfg") Then
+		set lwFileCfg = lwFso.opentextfile(lwPath & "../giipAgent.cfg", ForReading, true)
+		Do Until lwFileCfg.AtEndOfStream
+			CfgLine = lwFileCfg.ReadLine
 
-	aryHTTPRst = split(lwHTTPRst, "||")
+			if instr(CfgLine, "lssn =") > 0 or instr(CfgLine, "lssn=") > 0 then
+				cfgData = cfgData & "lssn = " & lwHTTPRst & vbCRLF
+			else
+				cfgData = cfgData & cfgLine
+			end if
+		Loop
+		lwFileCfg.close
 
-	if ubound(aryHTTPRst) = 2 then
-		lwScrSn = aryHTTPRst(0)
-		lwScrType = aryHTTPRst(1)
-		lwScriptBody = aryHTTPRst(2)
-		lwScriptBody = replace(lwScriptBody , "{{sk}}", at)
-		lwScriptBody = replace(lwScriptBody , "{{lssn}}", lsSn)
-		ExecQue lwPath, lwScriptBody
-		lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Que Executed!! qsn:" & lwScrSn & " Script Type:" & lwScrType & vbCRLF
-	else
-		lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] (" & ubound(aryHTTPRst) & ")" & lwHTTPRst & vbCRLF
-	end if
+		msgbox lwCfgData
 
-	lwHTTPRst = lwGetHTTP (lwURLAPI, "GET", "", "utf-8", "text")
-	lpi = lpi + 1
-loop
+		set lwFileCfg = lwFso.opentextfile(lwPath & "../giipAgent.cfg", ForWriting, true)
+		lwFileCfg.Write cfgData
+		lwFileCfg.close
+	End If
+else
+	lpi = 0
+	do while lwHTTPRst <> empty and lpi < 1
+
+		aryHTTPRst = split(lwHTTPRst, "||")
+
+		if ubound(aryHTTPRst) = 2 then
+			lwScrSn = aryHTTPRst(0)
+			lwScrType = aryHTTPRst(1)
+			lwScriptBody = aryHTTPRst(2)
+			lwScriptBody = replace(lwScriptBody , "{{sk}}", at)
+			lwScriptBody = replace(lwScriptBody , "{{lssn}}", lsSn)
+			ExecQue lwPath, lwScriptBody
+			lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Que Executed!! qsn:" & lwScrSn & " Script Type:" & lwScrType & vbCRLF
+		else
+			lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] (" & ubound(aryHTTPRst) & ")" & lwHTTPRst & vbCRLF
+		end if
+
+		lwHTTPRst = lwGetHTTP (lwURLAPI, "GET", "", "utf-8", "text")
+		lpi = lpi + 1
+	loop
+end if
 
 Set oWshShell = Nothing
 
