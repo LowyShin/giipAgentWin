@@ -1,4 +1,4 @@
-<job id="giipAgent ver 1.52">
+<job id="giipAgent ver 1.72">
 <script language="VBScript" src="../giipAgent.cfg"></script>
 <script language="VBScript">
 ' -------------------------------------------------------------
@@ -16,8 +16,8 @@
 ' -------------------------------------------------------------
 ' -------------------------------------------------------------
 ' Initialize
-On Error Resume Next
-scrver = 1.52
+' On Error Resume Next
+scrver = 1.72
 ' User Variables 
 
 strComputer = "." 
@@ -40,6 +40,7 @@ lwLogFileName = "giipAgent_" & SetDtToStr(now(), "YYYYMMDD") & ".log"
 ' Processing Variables
 Set oWshShell = CreateObject("WScript.Shell")
 lwPath= oWshShell.CurrentDirectory
+lwPathParent= mid(lwPath, 1, instrRev(lwPath, "\"))
 lwURLAPI = replace(lwURLAPI, "{{sk}}", at)
 lwURLAPI = replace(lwURLAPI, "{{lssn}}", lsSn)
 
@@ -57,10 +58,9 @@ lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH2
 
 ' 20191115 Lowy
 ' auto add new machine
-msgbox lwHTTPRst
 if isnumeric(lwHTTPRst) then
-	If Not lwFso.FileExists(lwPath & "../giipAgent.cfg") Then
-		set lwFileCfg = lwFso.opentextfile(lwPath & "../giipAgent.cfg", ForReading, true)
+	If lwFso.FileExists(lwPathParent & "giipAgent.cfg") Then
+		set lwFileCfg = lwFso.opentextfile(lwPathParent & "giipAgent.cfg", ForReading, -2)
 		Do Until lwFileCfg.AtEndOfStream
 			CfgLine = lwFileCfg.ReadLine
 
@@ -72,9 +72,18 @@ if isnumeric(lwHTTPRst) then
 		Loop
 		lwFileCfg.close
 
-		msgbox lwCfgData
+		lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Update giipAgent.cfg on " & lwPathParent & vbCRLF
 
-		set lwFileCfg = lwFso.opentextfile(lwPath & "../giipAgent.cfg", ForWriting, true)
+		set lwFileCfg = lwFso.opentextfile(lwPathParent & "giipAgent.cfg", ForWriting, -2)
+		lwFileCfg.Write cfgData
+		lwFileCfg.close
+	else
+		lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Create " & lwPathParent & "giipAgent.cfg " & vbCRLF
+
+		cfgData = "at = ""ce196e95447b350c53d80b809a316e42""" & vbCRLF & _
+			"lsSn = " & lwHTTPRst
+
+		set lwFileCfg = lwFso.createtextfile(lwPathParent & "giipAgent.cfg", true)
 		lwFileCfg.Write cfgData
 		lwFileCfg.close
 	End If
