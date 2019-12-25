@@ -33,16 +33,19 @@ Next
 ' -------------------------------------------------------------
 ' System Variables
 lwURLAPI = "https://giipaspstg02.azurewebsites.net/api/cqe/cqequeueget04.asp?sk={{sk}}&lssn={{lssn}}&hn=" & hostname & "&os=" & OSName & "&df=os&sv=" & scrver
+lwURLKVS = "https://giipaspstg02.azurewebsites.net/api/kvs/kvsput.asp?sk={{sk}}&type=lssn&key={{lssn}}&factor={{factor}}&value={{kvsval}}"
 lwPathLog = "../giipLogs"
 lwLogFileName = "giipAgent_" & SetDtToStr(now(), "YYYYMMDD") & ".log"
 
 ' -------------------------------------------------------------
 ' Processing Variables
-Set oWshShell = CreateObject("WScript.Shell")
-lwPath= oWshShell.CurrentDirectory
+Set lwWsShell = CreateObject("WScript.Shell")
+lwPath= lwWsShell.CurrentDirectory
 lwPathParent= mid(lwPath, 1, instrRev(lwPath, "\"))
 lwURLAPI = replace(lwURLAPI, "{{sk}}", at)
 lwURLAPI = replace(lwURLAPI, "{{lssn}}", lsSn)
+lwURLKVS = replace(lwURLKVS, "{{sk}}", at)
+lwURLKVS = replace(lwURLKVS, "{{lssn}}", lsSn)
 
 Set lwFso = CreateObject("Scripting.FileSystemObject")
 If Not lwFso.FolderExists(lwPathLog) Then
@@ -54,7 +57,20 @@ End If
 lwHTTPRst = lwGetHTTP (lwURLAPI, "GET", "", "utf-8", "text")
 
 lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] " & lwURLAPI & vbCRLF
-lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Check from giip SQE..." & lwScrType & vbCRLF
+lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Check from giip CQE..." & lwScrType & vbCRLF
+
+' 20191224 Lowy, Logging to Server
+if lwHTTPRst <> empty then
+	lwHTTPRstTxt = replace(mid(lwHTTPRst, 1, 500), """", "")
+	lwHTTPRstTxt = replace(lwHTTPRstTxt, "{", "~")
+	lwHTTPRstTxt = replace(lwHTTPRstTxt, "}", "~")
+end if
+lwURLKVSRep = replace(lwURLKVS, "{{factor}}", "gpAgentLog")
+lwURLKVSRep = replace(lwURLKVSRep, "{{kvsval}}", "{""CMD"":""Check CQE"",""RstVal"":""" & lwHTTPRstTxt & """ }")
+lwHTTPRstLog = lwGetHTTP (lwURLKVSRep, "GET", "", "utf-8", "text")
+
+lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] sent log : " & lwScrType & vbCRLF
+
 
 ' 20191115 Lowy
 ' auto add new machine
@@ -88,6 +104,7 @@ if isnumeric(lwHTTPRst) then
 		lwFileCfg.close
 	End If
 else
+	' Normal Queue
 	lpi = 0
 	do while lwHTTPRst <> empty and lpi < 1
 
@@ -101,6 +118,18 @@ else
 			lwScriptBody = replace(lwScriptBody , "{{lssn}}", lsSn)
 			ExecQue lwPath, lwScriptBody
 			lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Que Executed!! qsn:" & lwScrSn & " Script Type:" & lwScrType & vbCRLF
+			lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] " & lwWSSRst & vbCRLF
+
+			' 20191224 Lowy, Logging to Server
+			if lwWSSRst <> empty then
+				lwHTTPRstTxt = replace(mid(lwWSSRst, 1, 500), """", "")
+				lwHTTPRstTxt = replace(lwHTTPRstTxt, "{", "~")
+				lwHTTPRstTxt = replace(lwHTTPRstTxt, "}", "~")
+			end if
+			lwURLKVSRep = replace(lwURLKVS, "{{factor}}", "gpAgentLog")
+			lwURLKVSRep = replace(lwURLKVSRep, "{{kvsval}}", "{""CMD"":""Check CQE"",""RstVal"":""" & lwHTTPRstTxt & """ }")
+			lwHTTPRst = lwGetHTTP (lwURLKVSRep, "GET", "", "utf-8", "text")
+
 		else
 			lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] (" & ubound(aryHTTPRst) & ")" & lwHTTPRst & vbCRLF
 		end if
@@ -110,7 +139,7 @@ else
 	loop
 end if
 
-Set oWshShell = Nothing
+Set lwWsShell = Nothing
 
 Sub ExecQue(lwPath, lwText)
 	Dim lwFso, sAbsFileName, DT, sDT
@@ -133,14 +162,22 @@ Sub ExecQue(lwPath, lwText)
 
 	Select Case lwScrType
 	Case "wsf"
-		runcmd = "cmd.exe /c start /min " & lwTmpFileName & " ^& exit"
+		' runcmd = "cmd.exe /c start /min " & lwTmpFileName & " ^& exit"
 		runcmd = "wscript //B //Nologo " & lwTmpFileName
-		Call oWshShell.run(runcmd)
+		Set lwWSSRst = lwWsShell.Exec(runcmd)
+		' Call lwWsShell.run(runcmd)
 	Case "ps1"
+		' replace powershell permission
+		runcmd = "powershell.exe -Command ""Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force"""
+		Set lwWSSRst = lwWsShell.Exec(runcmd)
+		'Call lwWsShell.run(runcmd)
+
 		runcmd = "powershell.exe """ & lwPath & "\" & lwTmpFileName & """"
-		Call oWshShell.run(runcmd)
+		Set lwWSSRst = lwWsShell.Exec(runcmd)
+		' Call lwWsShell.run(runcmd)
 	Case else
-		Call oWshShell.run(lwTmpFileName)
+		Set lwWSSRst = lwWsShell.Exec(runcmd)
+		' Call lwWsShell.run(lwTmpFileName)
 	End Select
 
 	WScript.Sleep 10000
