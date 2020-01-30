@@ -32,8 +32,8 @@ Next
 
 ' -------------------------------------------------------------
 ' System Variables
-lwURLAPI = "https://giipaspstg02.azurewebsites.net/api/cqe/cqequeueget04.asp?sk={{sk}}&lssn={{lssn}}&hn=" & hostname & "&os=" & OSName & "&df=os&sv=" & scrver
-lwURLKVS = "https://giipaspstg02.azurewebsites.net/api/kvs/kvsput.asp?sk={{sk}}&type=lssn&key={{lssn}}&factor={{factor}}&value={{kvsval}}"
+lwURLAPI = "https://giipaspstg.azurewebsites.net/api/cqe/cqequeueget04.asp?sk={{sk}}&lssn={{lssn}}&hn=" & hostname & "&os=" & OSName & "&df=os&sv=" & scrver
+lwURLKVS = "https://giipaspstg.azurewebsites.net/api/kvs/kvsput.asp?sk={{sk}}&type=lssn&key={{lssn}}&factor={{factor}}&value={{kvsval}}"
 lwPathLog = "../giipLogs"
 lwLogFileName = "giipAgent_" & SetDtToStr(now(), "YYYYMMDD") & ".log"
 
@@ -69,7 +69,7 @@ lwURLKVSRep = replace(lwURLKVS, "{{factor}}", "gpAgentLog")
 lwURLKVSRep = replace(lwURLKVSRep, "{{kvsval}}", "{""CMD"":""Check CQE"",""RstVal"":""" & lwHTTPRstTxt & """ }")
 lwHTTPRstLog = lwGetHTTP (lwURLKVSRep, "GET", "", "utf-8", "text")
 
-lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] sent log : " & lwScrType & vbCRLF
+lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] sent log : " & lwHTTPRstLog & vbCRLF
 
 
 ' 20191115 Lowy
