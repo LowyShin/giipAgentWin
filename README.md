@@ -10,13 +10,21 @@ This repository is giipAgent for Windows.
 git clone https://github.com/LowyShin/giipAgentWin.git
 ```
 
-### Modify config file
+### Copy and Modify config file
 
+copy to parent directory.
+```command
+copy giipAgent.cfg ..\
+```
+
+update your service code from giip service management page
 ```command
 notepad giipAgent.cfg
 ```
 
-### Regidter Windows scheduler
+* If you add a new server, keep `lssn = 0` then replace on your service by automatically.
+
+### Register Windows scheduler
 
 Register giipAgent.wsf file to windows scheduler as below environment.
 
