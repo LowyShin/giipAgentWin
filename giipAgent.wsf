@@ -32,8 +32,8 @@ Next
 
 ' -------------------------------------------------------------
 ' System Variables
-lwURLAPI = "https://giipaspstg.azurewebsites.net/api/cqe/cqequeueget04.asp?sk={{sk}}&lssn={{lssn}}&hn=" & hostname & "&os=" & OSName & "&df=os&sv=" & scrver
-lwURLKVS = "https://giipaspstg.azurewebsites.net/api/kvs/kvsput.asp?sk={{sk}}&type=lssn&key={{lssn}}&factor={{factor}}&value={{kvsval}}"
+lwURLAPI = "https://giipaspstg02.azurewebsites.net/api/cqe/cqequeueget04.asp?sk={{sk}}&lssn={{lssn}}&hn=" & hostname & "&os=" & OSName & "&df=os&sv=" & scrver
+lwURLKVS = "https://giipaspstg02.azurewebsites.net/api/kvs/kvsput.asp?sk={{sk}}&type=lssn&key={{lssn}}&factor={{factor}}&value={{kvsval}}"
 lwPathLog = "../giipLogs"
 lwLogFileName = "giipAgent_" & SetDtToStr(now(), "YYYYMMDD") & ".log"
 
@@ -61,82 +61,82 @@ lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH2
 
 ' 20191224 Lowy, Logging to Server
 if lwHTTPRst <> empty then
-	lwHTTPRstTxt = replace(mid(lwHTTPRst, 1, 500), """", "")
-	lwHTTPRstTxt = replace(lwHTTPRstTxt, "{", "~")
-	lwHTTPRstTxt = replace(lwHTTPRstTxt, "}", "~")
-end if
-lwURLKVSRep = replace(lwURLKVS, "{{factor}}", "gpAgentLog")
-lwURLKVSRep = replace(lwURLKVSRep, "{{kvsval}}", "{""CMD"":""Check CQE"",""RstVal"":""" & lwHTTPRstTxt & """ }")
-lwHTTPRstLog = lwGetHTTP (lwURLKVSRep, "GET", "", "utf-8", "text")
 
-lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] sent log : " & lwHTTPRstLog & vbCRLF
+	' 20191115 Lowy
+	' auto add new machine
+	if isnumeric(lwHTTPRst) then
+		logFileFull = lwPathParent & "giipAgent.cfg"
+		lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Read cfg file : " & logFileFull & vbCRLF
+		If lwFso.FileExists(logFileFull) Then
+			set lwFileCfg = lwFso.opentextfile(logFileFull, 1)
+			Do Until lwFileCfg.AtEndOfStream
+				CfgLine = lwFileCfg.ReadLine
+				if CfgLine <>  empty then
+					if instr(lcase(CfgLine), "lssn =") > 0 or instr(lcase(CfgLine), "lssn=") > 0 then
+						cfgData = cfgData & "lssn = " & lwHTTPRst & vbCRLF
+					else
+						cfgData = cfgData & cfgLine & vbCRLF
+					end if
+				end if
+			Loop
+			lwFileCfg.close
 
+			lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Update giipAgent.cfg on " & lwPathParent & vbCRLF
 
-' 20191115 Lowy
-' auto add new machine
-if isnumeric(lwHTTPRst) then
-	If lwFso.FileExists(lwPathParent & "giipAgent.cfg") Then
-		set lwFileCfg = lwFso.opentextfile(lwPathParent & "giipAgent.cfg", ForReading, -2)
-		Do Until lwFileCfg.AtEndOfStream
-			CfgLine = lwFileCfg.ReadLine
-
-			if instr(CfgLine, "lssn =") > 0 or instr(CfgLine, "lssn=") > 0 then
-				cfgData = cfgData & "lssn = " & lwHTTPRst & vbCRLF
-			else
-				cfgData = cfgData & cfgLine
-			end if
-		Loop
-		lwFileCfg.close
-
-		lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Update giipAgent.cfg on " & lwPathParent & vbCRLF
-
-		set lwFileCfg = lwFso.opentextfile(lwPathParent & "giipAgent.cfg", ForWriting, -2)
-		lwFileCfg.Write cfgData
-		lwFileCfg.close
-	else
-		lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Create " & lwPathParent & "giipAgent.cfg " & vbCRLF
-
-		cfgData = "at = ""ce196e95447b350c53d80b809a316e42""" & vbCRLF & _
-			"lsSn = " & lwHTTPRst
-
-		set lwFileCfg = lwFso.createtextfile(lwPathParent & "giipAgent.cfg", true)
-		lwFileCfg.Write cfgData
-		lwFileCfg.close
-	End If
-else
-	' Normal Queue
-	lpi = 0
-	do while lwHTTPRst <> empty and lpi < 1
-
-		aryHTTPRst = split(lwHTTPRst, "||")
-
-		if ubound(aryHTTPRst) = 2 then
-			lwScrSn = aryHTTPRst(0)
-			lwScrType = aryHTTPRst(1)
-			lwScriptBody = aryHTTPRst(2)
-			lwScriptBody = replace(lwScriptBody , "{{sk}}", at)
-			lwScriptBody = replace(lwScriptBody , "{{lssn}}", lsSn)
-			ExecQue lwPath, lwScriptBody
-			lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Que Executed!! qsn:" & lwScrSn & " Script Type:" & lwScrType & vbCRLF
-			lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] " & lwWSSRst & vbCRLF
-
-			' 20191224 Lowy, Logging to Server
-			if lwWSSRst <> empty then
-				lwHTTPRstTxt = replace(mid(lwWSSRst, 1, 500), """", "")
-				lwHTTPRstTxt = replace(lwHTTPRstTxt, "{", "~")
-				lwHTTPRstTxt = replace(lwHTTPRstTxt, "}", "~")
-			end if
-			lwURLKVSRep = replace(lwURLKVS, "{{factor}}", "gpAgentLog")
-			lwURLKVSRep = replace(lwURLKVSRep, "{{kvsval}}", "{""CMD"":""Check CQE"",""RstVal"":""" & lwHTTPRstTxt & """ }")
-			lwHTTPRst = lwGetHTTP (lwURLKVSRep, "GET", "", "utf-8", "text")
-
+			set lwFileCfg = lwFso.opentextfile(logFileFull, 2)
+			lwFileCfg.Write cfgData
+			lwFileCfg.close
 		else
-			lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] (" & ubound(aryHTTPRst) & ")" & lwHTTPRst & vbCRLF
-		end if
+			lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] No config file " & logFileFull & vbCRLF
+		End If
+	else
 
-		lwHTTPRst = lwGetHTTP (lwURLAPI, "GET", "", "utf-8", "text")
-		lpi = lpi + 1
-	loop
+		' put KVS to log
+		lwHTTPRstTxt = replace(mid(lwHTTPRst, 1, 500), """", "")
+		lwHTTPRstTxt = replace(lwHTTPRstTxt, "{", "~")
+		lwHTTPRstTxt = replace(lwHTTPRstTxt, "}", "~")
+		lwURLKVSRep = replace(lwURLKVS, "{{factor}}", "gpAgentLog")
+		lwURLKVSRep = replace(lwURLKVSRep, "{{kvsval}}", "{""CMD"":""Check CQE"",""RstVal"":""" & lwHTTPRstTxt & """ }")
+		lwHTTPRstLog = lwGetHTTP (lwURLKVSRep, "GET", "", "utf-8", "text")
+
+		lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] sent log to KVS : " & lwHTTPRstLog & vbCRLF
+
+		' Normal Queue
+		lpi = 0
+		do while lwHTTPRst <> empty and lpi < 1
+
+			aryHTTPRst = split(lwHTTPRst, "||")
+
+			if ubound(aryHTTPRst) = 2 then
+				lwScrSn = aryHTTPRst(0)
+				lwScrType = aryHTTPRst(1)
+				lwScriptBody = aryHTTPRst(2)
+				lwScriptBody = replace(lwScriptBody , "{{sk}}", at)
+				lwScriptBody = replace(lwScriptBody , "{{lssn}}", lsSn)
+				ExecQue lwPath, lwScriptBody
+				lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] Que Executed!! qsn:" & lwScrSn & " Script Type:" & lwScrType & vbCRLF
+				lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] " & lwWSSRst & vbCRLF
+
+				' 20191224 Lowy, Logging to Server
+				if lwWSSRst <> empty then
+					lwHTTPRstTxt = replace(mid(lwWSSRst, 1, 500), """", "")
+					lwHTTPRstTxt = replace(lwHTTPRstTxt, "{", "~")
+					lwHTTPRstTxt = replace(lwHTTPRstTxt, "}", "~")
+				end if
+				lwURLKVSRep = replace(lwURLKVS, "{{factor}}", "gpAgentLog")
+				lwURLKVSRep = replace(lwURLKVSRep, "{{kvsval}}", "{""CMD"":""Check CQE"",""RstVal"":""" & lwHTTPRstTxt & """ }")
+				lwHTTPRst = lwGetHTTP (lwURLKVSRep, "GET", "", "utf-8", "text")
+
+			else
+				lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] (" & ubound(aryHTTPRst) & ")" & lwHTTPRst & vbCRLF
+			end if
+
+			lwHTTPRst = lwGetHTTP (lwURLAPI, "GET", "", "utf-8", "text")
+			lpi = lpi + 1
+		loop
+	end if
+else
+	lwLogFileWrite lwPathLog, lwLogFileName, "[" & SetDtToStr(now(), "YYYY/MM/DD HH24:MI:SS") & "] No data... " & lwHTTPRst & vbCRLF
 end if
 
 Set lwWsShell = Nothing
