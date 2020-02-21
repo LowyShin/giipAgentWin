@@ -32,8 +32,8 @@ Next
 
 ' -------------------------------------------------------------
 ' System Variables
-lwURLAPI = "https://giipaspstg02.azurewebsites.net/api/cqe/cqequeueget04.asp?sk={{sk}}&lssn={{lssn}}&hn=" & hostname & "&os=" & OSName & "&df=os&sv=" & scrver
-lwURLKVS = "https://giipaspstg02.azurewebsites.net/api/kvs/kvsput.asp?sk={{sk}}&type=lssn&key={{lssn}}&factor={{factor}}&value={{kvsval}}"
+lwURLAPI = "https://giipasp.azurewebsites.net/api/cqe/cqequeueget04.asp?sk={{sk}}&lssn={{lssn}}&hn=" & hostname & "&os=" & OSName & "&df=os&sv=" & scrver
+lwURLKVS = "https://giipasp.azurewebsites.net/api/kvs/kvsput.asp?sk={{sk}}&type=lssn&key={{lssn}}&factor={{factor}}&value={{kvsval}}"
 lwPathLog = "../giipLogs"
 lwLogFileName = "giipAgent_" & SetDtToStr(now(), "YYYYMMDD") & ".log"
 
