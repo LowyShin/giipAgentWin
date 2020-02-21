@@ -17,7 +17,7 @@
 ' -------------------------------------------------------------
 ' Initialize
 On Error Resume Next
-scrver = 1.72
+scrver = "1.72"
 ' User Variables 
 
 strComputer = "." 
