@@ -238,11 +238,9 @@ Function lwGetHTTP(url, meth, fv, charset, output)
 End Function
 
 Function SetDtToStr(dt, date_type)
-
       Dim mydate
       date_type = Ucase(date_type)
       if isdate(dt) then
-
             hour12 = hour(dt)
             if cint(hour12) > 12 then
                   hour12 = hour12 - 12
@@ -255,15 +253,10 @@ Function SetDtToStr(dt, date_type)
             mydate = replace (mydate, "HH", hour12)
             mydate = replace (mydate, "MI", right("0" & minute(dt),2))
             mydate = replace (mydate, "SS", right("0" & second(dt),2))
-
       else
-     
             mydate = "1999/01/01 00:00:00"
-     
       end if
-
       SetDtToStr = mydate
-
 End Function
 
 </script>

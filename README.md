@@ -7,7 +7,14 @@ This repository is giipAgent for Windows.
 ### Download AgentFile
 
 ```shell
+# Windows
 git clone https://github.com/LowyShin/giipAgentWin.git
+
+# Using UiPath on Windows
+git clone https://github.com/LowyShin/giipAgentUIP.git
+
+# Linux
+git clone https://github.com/LowyShin/giipAgentLinux.git
 ```
 
 ### Copy and Modify config file
@@ -55,3 +62,11 @@ If you want get GIIP, contact us any time!
 ## Contact
 
 * [Contact Us](https://github.com/LowyShin/giip/wiki/Contact-Us)
+
+## History
+
+* 20200309 Lowy
+  * correct when lssn is 0 (New Machine)
+  * correct enforce command case of not reading.
+* 20200306 Lowy
+  * Add [giipAgentUIP](https://github.com/LowyShin/giipAgentUIP) agent using UiPath.
