@@ -2,6 +2,8 @@
 
 This repository is giipAgent for Windows.
 
+for Linux/UNIX(RHEL(RedHat Enterprise Linux), CentOS, Ubuntu, Fedora, FreeBSD, Solaris, HP-UX tested) : https://github.com/LowyShin/giipAgentLinux
+
 ## Usage
 
 ### Download AgentFile
