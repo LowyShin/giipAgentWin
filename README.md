@@ -13,7 +13,11 @@ AHK : Auto hot key
 WSF : Windows Script File
 ```
 
-for Linux/UNIX(RHEL(RedHat Enterprise Linux), CentOS, Ubuntu, Fedora, FreeBSD, Solaris, HP-UX tested) : https://github.com/LowyShin/giipAgentLinux
+- for UiPath Agent
+  - https://github.com/LowyShin/giipAgentUIP
+
+- for Linux/UNIX(RHEL(RedHat Enterprise Linux), CentOS, Ubuntu, Fedora, FreeBSD, Solaris, HP-UX tested) :
+  - https://github.com/LowyShin/giipAgentLinux
 
 ## Usage
 
