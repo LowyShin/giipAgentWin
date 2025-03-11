@@ -4,7 +4,9 @@ This repository is giipAgent for Windows.
 
 ```warn
 20250311 warning.
-This version uses WSF, which is restricted by the latest security tools. If it cannot be used with the latest security tools, please use the AHK v1.1 version of the agent. The AHK v1 agent is also included. However, the AHK v1 agent cannot be used in AHK v2.
+This version uses WSF, which is restricted by the latest security tools.
+If it cannot be used with the latest security tools, please use the AHK v1.1 version of the agent. The AHK v1 agent is also included.
+However, the AHK v1 agent cannot be used in AHK v2.
 ```
 
 for Linux/UNIX(RHEL(RedHat Enterprise Linux), CentOS, Ubuntu, Fedora, FreeBSD, Solaris, HP-UX tested) : https://github.com/LowyShin/giipAgentLinux
