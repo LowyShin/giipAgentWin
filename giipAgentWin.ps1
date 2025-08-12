@@ -1,53 +1,69 @@
-<#
-.SYNOPSIS
-    giipAgent (PowerShell port) — with detailed comments. PowerShell version of the original .wsf / VBScript logic.
+#region ====== KVS Send Utility ======
+function Send-KVSResult {
+  param(
+    [Parameter(Mandatory)][string]$kvsUrlBase,
+    [Parameter(Mandatory)][string]$factor,
+    [Parameter(Mandatory)][string]$payloadJson
+  )
+  $kvsUrl = $kvsUrlBase.Replace('{{factor}}', $factor).Replace('{{kvsval}}', (UrlEncode $payloadJson))
+  Write-Log $LVL_INFO "Send-KVSResult: $kvsUrl"
+  $kvsRes = Invoke-Http -Method GET -Url $kvsUrl
+  Write-Log $LVL_INFO "KVS response: $kvsRes"
+  return $kvsRes
+}
+#endregion
 
-.DESCRIPTION
-    The following processing flow is followed, implemented in a safer and more maintainable way:
-    1) Read configuration (../giipAgent.cfg) to get 'at' and 'lsSn'
-    2) Retrieve OS and host information
-    3) Fetch one queue item from CQE API
-       - If numeric, treat as new lssn and update cfg
-       - If string, parse as "qsn||type||scriptBody"
-    4) Save temporary script to %TEMP% and execute while tracking PID
-       - type=wsf: wscript.exe //B //Nologo tmp.wsf
-       - type=ps1: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tmp.ps1
-       - otherwise: cmd.exe /c tmp.cmd
-    5) Send the first 500 characters of execution result to KVS (URL encode/JSON escape)
-
-  Improvements over the previous version:
-    - Monitors execution time using Start-Process return value (PID), and kills only the relevant PID (entire process tree) on timeout
-    - Uses HttpClient for HTTP with explicit timeout and enforces TLS1.2
-    - Logs are daily files with levels (INFO/WARN/ERROR)
-    - Temporary files are created with unique names and cleaned up after execution
-
-.NOTES
-  Author   : Lowy (original), PS port & comments: 2025-08-12
-  Requires : Windows PowerShell 5.1+ (または PowerShell 7+ / Windows)
-#>
+# ============================================================================
+# giipAgent (PowerShell port)
+#
+# This script implements a queue agent for CQE API, ported from the original
+# .wsf/VBScript logic. It is designed for safety, maintainability, and clarity.
+#
+# Main processing flow:
+#   1. Read configuration (../giipAgent.cfg) to get 'at' and 'lsSn'
+#   2. Retrieve OS and host information
+#   3. Fetch one queue item from CQE API
+#      - If numeric, treat as new lssn and update cfg
+#      - If string, parse as "qsn||type||scriptBody"
+#   4. Save temporary script to %TEMP% and execute while tracking PID
+#      - type=wsf: wscript.exe //B //Nologo tmp.wsf
+#      - type=ps1: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tmp.ps1
+#      - otherwise: cmd.exe /c tmp.cmd
+#   5. Send the first 500 characters of execution result to KVS (URL encode/JSON escape)
+#
+# Improvements over the previous version:
+#   - Monitors execution time using Start-Process return value (PID), and kills only the relevant PID (entire process tree) on timeout
+#   - Uses HttpClient for HTTP with explicit timeout and enforces TLS1.2
+#   - Logs are daily files with levels (INFO/WARN/ERROR)
+#   - Temporary files are created with unique names and cleaned up after execution
+#
+# Author   : Lowy (original), PS port & comments: 2025-08-12
+# Requires : Windows PowerShell 5.1+ or PowerShell 7+
+# ============================================================================
 
 #region ====== Constants & Initialization ======
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# バージョン表記
-$AGENT_VER = '1.72'
 
-# API URL テンプレート
+#region ====== Constants & Initialization ======
+$AGENT_VER = '1.72' # Agent version
+
+# API URL templates
 $API_QUEUE_URL_TEMPLATE = 'https://giipasp.azurewebsites.net/api/cqe/cqequeueget04.asp?sk={{sk}}&lssn={{lssn}}&hn={{hn}}&os={{os}}&df=os&sv={{sv}}'
 $API_KVS_URL_TEMPLATE   = 'https://giipasp.azurewebsites.net/api/kvs/kvsput.asp?sk={{sk}}&type=lssn&key={{lssn}}&factor={{factor}}&value={{kvsval}}'
 
-# Log output
-$LOG_DIR_REL          = '../giipLogs'                 # Compatible with previous version: relative to script location
-$LOG_PREFIX           = 'giipAgent_'
-$LOG_RETENTION_DAYS   = 30                            # Optional: used to delete old logs
+# Log output settings
+$LOG_DIR_REL        = '../giipLogs'   # Relative to script location
+$LOG_PREFIX         = 'giipAgent_'
+$LOG_RETENTION_DAYS = 30              # Not used, but kept for future log cleanup
 
-# Timeout (ms)
-$HTTP_TIMEOUT_MS      = 20000                         # Total guideline for resolve/connect/send/receive
-$EXEC_TIMEOUT_MS      = 60000                         # Maximum wait time for temporary script execution
-$RESULT_SNIPPET_LEN   = 500                           # Summary length when sending to KVS
+# Timeout settings (ms)
+$HTTP_TIMEOUT_MS    = 20000           # HTTP timeout
+$EXEC_TIMEOUT_MS    = 60000           # Script execution timeout
+$RESULT_SNIPPET_LEN = 500             # Max length for KVS result summary
 
-# Log level
+# Log levels
 $LVL_INFO = 'INFO'
 $LVL_WARN = 'WARN'
 $LVL_ERR  = 'ERROR'
@@ -55,13 +71,17 @@ $LVL_ERR  = 'ERROR'
 $BaseDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
 $TempDir = [System.IO.Path]::GetTempPath()
 
-# Log directory (avoid mixing PathInfo and string)
+
+# Log directory setup (avoid mixing PathInfo and string)
 $LogDirCandidate = Join-Path -Path $BaseDir -ChildPath $LOG_DIR_REL
-if (-not (Test-Path -LiteralPath $LogDirCandidate)) { New-Item -ItemType Directory -Path $LogDirCandidate | Out-Null }
+if (-not (Test-Path -LiteralPath $LogDirCandidate)) {
+  New-Item -ItemType Directory -Path $LogDirCandidate | Out-Null
+}
 $LogDir = (Resolve-Path -LiteralPath $LogDirCandidate).Path
 $LogFile = Join-Path $LogDir ("{0}{1}.log" -f $LOG_PREFIX, (Get-Date -Format 'yyyyMMdd'))
 
-# Enable TLS 1.2 (prevent failures on old environments)
+
+# Enable TLS 1.2 (for compatibility with older environments)
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
 
@@ -70,7 +90,9 @@ $script:HttpClient = New-Object System.Net.Http.HttpClient
 $script:HttpClient.Timeout = [TimeSpan]::FromMilliseconds($HTTP_TIMEOUT_MS)
 #endregion
 
-#region ====== Utilities: Logging/Formatting/Encoding ======
+###############################################################################
+# Utility Functions: Logging, Formatting, Encoding
+###############################################################################
 function Write-Log {
   param(
     [Parameter(Mandatory)][ValidateSet('INFO','WARN','ERROR')] [string]$Level,
@@ -78,12 +100,16 @@ function Write-Log {
   )
   $ts = Get-Date -Format 'yyyy/MM/dd HH:mm:ss'
   $line = "[$ts] [$Level] $Message"
-  Add-Content -LiteralPath $LogFile.ToString() -Value $line
+  try {
+    Add-Content -LiteralPath $LogFile -Value $line
+  } catch {
+    Write-Host "[WARN] Failed to write to log file: $LogFile. $_"
+  }
   Write-Host $line
 }
 
 function Format-Date([datetime]$dt, [string]$pattern) {
-# Approximate of legacy SetDtToStr (only main formats used)
+  # Format date according to a custom pattern (legacy compatible)
   $s = $pattern.ToUpperInvariant()
   $s = $s -replace 'YYYY', $dt.ToString('yyyy')
   $s = $s -replace 'YY',   $dt.ToString('yy')
@@ -106,9 +132,11 @@ function Sanitize-ForJson([string]$s) {
 }
 #endregion
 
-#region ====== Config/Environment Retrieval ======
+###############################################################################
+# Config/Environment Retrieval
+###############################################################################
 function Get-OsAndHost {
-    # Get OS name and host name from Win32_OperatingSystem
+  # Get OS name and host name from Win32_OperatingSystem
   try {
     $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
     return [PSCustomObject]@{ OsName = [string]$os.Caption; HostName = [string]$os.CSName }
@@ -119,6 +147,7 @@ function Get-OsAndHost {
 
 
 function Read-Cfg { param([string]$CfgPath)
+  # Reads configuration file and returns a hashtable of key-value pairs.
   # Expected format example:
   #   at   = "<AccessToken>"
   #   lsSn = "<LicenseSerialNumber>"
@@ -140,6 +169,7 @@ function Read-Cfg { param([string]$CfgPath)
 
 function Update-CfgLssn {
   param([Parameter(Mandatory)][string]$CfgPath, [Parameter(Mandatory)][string]$NewLssn)
+  # Updates the lssn value in the configuration file.
   $content = Get-Content -LiteralPath $CfgPath -Raw
   $re = New-Object System.Text.RegularExpressions.Regex('(^|\r?\n)\s*lssn\s*=\s*.*$', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
   if ($re.IsMatch($content)) {
@@ -153,7 +183,9 @@ function Update-CfgLssn {
 }
 #endregion
 
-#region ====== HTTP Wrapper ======
+###############################################################################
+# HTTP Wrapper
+###############################################################################
 function Invoke-Http {
   param(
     [Parameter(Mandatory)][ValidateSet('GET','POST')] [string]$Method,
@@ -170,11 +202,7 @@ function Invoke-Http {
 
     if ($Method -eq 'POST') {
       $enc = [System.Text.Encoding]::UTF8
-      if ($null -eq $Body) {
-        $bodyText = ''
-      } else {
-        $bodyText = $Body
-      }
+      $bodyText = if ($null -eq $Body) { '' } else { $Body }
       $req.Content = New-Object System.Net.Http.StringContent($bodyText, $enc, $ContentType)
     }
 
@@ -191,14 +219,18 @@ function Invoke-Http {
 }
 #endregion
 
-#region ====== キュー実行 ======
+###############################################################################
+# Queue Script Execution
+###############################################################################
 function New-TempScriptPath { param([string]$Ext)
+  # Generate a unique temporary script path
   $name = 'giip_tmp_{0}_{1}{2}' -f (Get-Date -Format 'yyyyMMddHHmmss'), (Get-Random -Maximum 999999), $Ext
   return (Join-Path $TempDir $name)
 }
 
 
 function Write-AllTextUtf8NoBom { param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Content)
+  # Write text to a file as UTF-8 without BOM
   $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
   [System.IO.File]::WriteAllText($Path, $Content, $utf8NoBom)
 }
@@ -209,21 +241,22 @@ function Invoke-QueueScript {
     [Parameter(Mandatory)][ValidateSet('wsf','ps1','cmd','other')] [string]$Type,
     [Parameter(Mandatory)][string]$Body
   )
+  # Determine file extension
   $ext = switch ($Type) { 'wsf' { '.wsf' } 'ps1' { '.ps1' } 'cmd' { '.cmd' } default { '.cmd' } }
 
   $tmpScript = New-TempScriptPath -Ext $ext
 
-# Write temporary script
-Write-AllTextUtf8NoBom -Path $tmpScript -Content $Body
+  # Write temporary script
+  Write-AllTextUtf8NoBom -Path $tmpScript -Content $Body
 
-# Execution command
-switch ($Type) {
+  # Build execution command
+  switch ($Type) {
     'wsf' { $exe = "$env:SystemRoot\System32\wscript.exe"; $arg = "//B //Nologo `"$tmpScript`"" }
     'ps1' { $exe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"; $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$tmpScript`"" }
     default { $exe = "$env:SystemRoot\System32\cmd.exe"; $arg = "/c `"$tmpScript`"" }
-}
+  }
 
-# Start-Process (capture standard output/error)
+  # Start-Process (capture standard output/error)
   $psi = New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName               = $exe
   $psi.Arguments              = $arg
@@ -238,7 +271,7 @@ switch ($Type) {
   $ok = $proc.Start()
   if (-not $ok) { throw 'Failed to start process.' }
 
-# Timeout monitoring
+  # Timeout monitoring
   if (-not $proc.WaitForExit([int]$EXEC_TIMEOUT_MS)) {
     try { & "$env:SystemRoot\System32\taskkill.exe" /PID $proc.Id /T /F | Out-Null } catch {}
     Write-Log $LVL_WARN "Child process timeout. Killed. pid=$($proc.Id)"
@@ -247,20 +280,38 @@ switch ($Type) {
     $exitCode = $proc.ExitCode
   }
 
-# Collect output
-$stdOut = $proc.StandardOutput.ReadToEnd()
-$stdErr = $proc.StandardError.ReadToEnd()
+  # Collect output
+  $stdOut = $proc.StandardOutput.ReadToEnd()
+  $stdErr = $proc.StandardError.ReadToEnd()
 
-# Cleanup
+  # Cleanup
   if (Test-Path -LiteralPath $tmpScript) { Remove-Item -LiteralPath $tmpScript -ErrorAction SilentlyContinue }
 
   $output = if ($stdErr) { "$stdOut`nERR:`n$stdErr" } else { $stdOut }
 
   return [PSCustomObject]@{ Ok = ($exitCode -eq 0); Output = $output; Code = $exitCode }
+#region ====== KVS Send Utility ======
+###############################################################################
+# KVS Send Utility
+###############################################################################
+function Send-KVSResult {
+  param(
+    [Parameter(Mandatory)][string]$kvsUrlBase,  # Base KVS URL with {{sk}} and {{lssn}} replaced
+    [Parameter(Mandatory)][string]$factor,       # Factor for KVS (e.g., 'gpAgentLog')
+    [Parameter(Mandatory)][string]$payloadJson   # JSON payload to send
+  )
+  $kvsUrl = $kvsUrlBase.Replace('{{factor}}', $factor).Replace('{{kvsval}}', (UrlEncode $payloadJson))
+  Write-Log $LVL_INFO "Send-KVSResult: $kvsUrl"
+  $kvsRes = Invoke-Http -Method GET -Url $kvsUrl
+  Write-Log $LVL_INFO "KVS response: $kvsRes"
+  return $kvsRes
+}
 }
 #endregion
 
-#region ====== Main Processing ======
+###############################################################################
+# Main Processing
+###############################################################################
 Write-Log $LVL_INFO "Start giipAgent v$AGENT_VER"
 
 # ==== Diagnostics (prints to console for paste) ====
@@ -302,6 +353,9 @@ $queueUrl = $queueUrl.Replace('{{os}}',   (UrlEncode $osName))
 $queueUrl = $queueUrl.Replace('{{sv}}',   (UrlEncode $AGENT_VER))
 
 $kvsUrlBase = $API_KVS_URL_TEMPLATE
+# kvsUrlBase: Base URL template for KVS API, with {{sk}} and {{lssn}} replaced by actual values. Used as the base for constructing KVS result submission URLs.
+    # {{sk}} : secret key
+    # {{lssn}} : logical server serial number 
 $kvsUrlBase = $kvsUrlBase.Replace('{{sk}}',   $at)
 $kvsUrlBase = $kvsUrlBase.Replace('{{lssn}}', $lsSn)
 
@@ -317,9 +371,9 @@ if ([string]::IsNullOrWhiteSpace($qRes)) {
 
 # 5) If numeric, update lssn; otherwise, execute queue
 if ($qRes -match '^[0-9]+$') {
-    Write-Log $LVL_INFO "Numeric response (interpreted as new lssn): $qRes"
-    Update-CfgLssn -CfgPath $cfgPath -NewLssn $qRes
-    Write-Log $LVL_INFO 'Updated lssn in giipAgent.cfg.'
+  Write-Log $LVL_INFO "Numeric response (interpreted as new lssn): $qRes"
+  Update-CfgLssn -CfgPath $cfgPath -NewLssn $qRes
+  Write-Log $LVL_INFO 'Updated lssn in giipAgent.cfg.'
 } else {
     $parts = $qRes -split '\|\|'
     if ($parts.Count -eq 3) {
@@ -346,11 +400,9 @@ if ($qRes -match '^[0-9]+$') {
         if ($null -ne $exec.Output -and $exec.Output.Length -gt 0) {
             $snippet = $exec.Output.Substring(0, [Math]::Min($RESULT_SNIPPET_LEN, $exec.Output.Length))
         }
-        $payloadObj = @{ CMD = 'Exec CQE'; qsn = $qsn; type = $qType; RstVal = (Sanitize-ForJson $snippet) }
-        $payloadJson = ($payloadObj | ConvertTo-Json -Depth 3 -Compress)
-        $kvsUrl = $kvsUrlBase.Replace('{{factor}}', 'gpAgentLog').Replace('{{kvsval}}', (UrlEncode $payloadJson))
-        $kvsRes = Invoke-Http -Method GET -Url $kvsUrl
-        Write-Log $LVL_INFO "KVS response: $kvsRes"
+  $payloadObj = @{ CMD = 'Exec CQE'; qsn = $qsn; type = $qType; RstVal = (Sanitize-ForJson $snippet) }
+  $payloadJson = ($payloadObj | ConvertTo-Json -Depth 3 -Compress)
+  Send-KVSResult -kvsUrlBase $kvsUrlBase -factor 'gpAgentLog' -payloadJson $payloadJson | Out-Null
     } else {
         $preview = $qRes
         if ($qRes.Length -gt 200) {
@@ -361,10 +413,9 @@ if ($qRes -match '^[0-9]+$') {
         if ($qRes.Length -gt $RESULT_SNIPPET_LEN) {
             $snippet = $qRes.Substring(0,$RESULT_SNIPPET_LEN)
         }
-        $payloadObj = @{ CMD = 'Check CQE'; RstVal = (Sanitize-ForJson $snippet) }
-        $payloadJson = ($payloadObj | ConvertTo-Json -Depth 3 -Compress)
-        $kvsUrl = $kvsUrlBase.Replace('{{factor}}', 'gpAgentLog').Replace('{{kvsval}}', (UrlEncode $payloadJson))
-        $null = Invoke-Http -Method GET -Url $kvsUrl
+  $payloadObj = @{ CMD = 'Check CQE'; RstVal = (Sanitize-ForJson $snippet) }
+  $payloadJson = ($payloadObj | ConvertTo-Json -Depth 3 -Compress)
+  Send-KVSResult -kvsUrlBase $kvsUrlBase -factor 'gpAgentLog' -payloadJson $payloadJson | Out-Null
     }
 }
 
