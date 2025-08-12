@@ -1,17 +1,4 @@
-#region ====== KVS Send Utility ======
-function Send-KVSResult {
-  param(
-    [Parameter(Mandatory)][string]$kvsUrlBase,
-    [Parameter(Mandatory)][string]$factor,
-    [Parameter(Mandatory)][string]$payloadJson
-  )
-  $kvsUrl = $kvsUrlBase.Replace('{{factor}}', $factor).Replace('{{kvsval}}', (UrlEncode $payloadJson))
-  Write-Log $LVL_INFO "Send-KVSResult: $kvsUrl"
-  $kvsRes = Invoke-Http -Method GET -Url $kvsUrl
-  Write-Log $LVL_INFO "KVS response: $kvsRes"
-  return $kvsRes
-}
-#endregion
+
 
 # ============================================================================
 # giipAgent (PowerShell port)
@@ -89,6 +76,22 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 $script:HttpClient = New-Object System.Net.Http.HttpClient
 $script:HttpClient.Timeout = [TimeSpan]::FromMilliseconds($HTTP_TIMEOUT_MS)
 #endregion
+
+###############################################################################
+# KVS Send Utility
+###############################################################################
+function Send-KVSResult {
+  param(
+    [Parameter(Mandatory)][string]$kvsUrlBase,  # Base KVS URL with {{sk}} and {{lssn}} replaced
+    [Parameter(Mandatory)][string]$factor,       # Factor for KVS (e.g., 'gpAgentLog')
+    [Parameter(Mandatory)][string]$payloadJson   # JSON payload to send
+  )
+  $kvsUrl = $kvsUrlBase.Replace('{{factor}}', $factor).Replace('{{kvsval}}', (UrlEncode $payloadJson))
+  Write-Log $LVL_INFO "Send-KVSResult: $kvsUrl"
+  $kvsRes = Invoke-Http -Method GET -Url $kvsUrl
+  Write-Log $LVL_INFO "KVS response: $kvsRes"
+  return $kvsRes
+}
 
 ###############################################################################
 # Utility Functions: Logging, Formatting, Encoding
