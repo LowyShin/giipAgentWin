@@ -1,0 +1,1 @@
+powershell -ExecutionPolicy Bypass -File collect_sql_net_inventory.ps1
