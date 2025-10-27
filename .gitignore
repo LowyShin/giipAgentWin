@@ -1,0 +1,33 @@
+# GIIP Agent Configuration Files (CONTAINS SECRETS!)
+# Never commit these files with actual credentials
+giipAgent.cfg
+*.cfg.local
+*.cfg.prod
+*.cfg.backup
+*_backup.cfg
+
+# Log Files (may contain sensitive data)
+*.log
+giipLogs/
+../giipLogs/
+
+# Temporary Files
+*.tmp
+*.temp
+giipTmpScript.*
+discovery-output*.json
+
+# OS Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor Files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Discovery Output (may contain system info)
+$env:TEMP\giip-discovery-*.json
