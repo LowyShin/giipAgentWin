@@ -129,8 +129,8 @@ Write-Host "[DIAG] JSON preview: $($json.Substring(0, [Math]::Min(400, $json.Len
 if ($KVSConfig['Enabled'] -eq 'true') {
   # Build apirule.md compliant request: text + jsondata
   $kvspText = "KVSPut $($KVSConfig['KType']) $($KVSConfig['KKey']) $KFactor"
-  $kvspJsonObj = @{ kType = $KVSConfig['KType']; kKey = $KVSConfig['KKey']; kFactor = $KFactor; value = $summary }
-  $kvspJson = $kvspJsonObj | ConvertTo-Json -Depth 8 -Compress
+  # 직접 $summary를 JSON으로 변환 (value 래퍼 제거)
+  $kvspJson = $summary | ConvertTo-Json -Depth 8 -Compress
 
   $postParams = [ordered]@{
     text     = $kvspText
