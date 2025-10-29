@@ -1,25 +1,27 @@
-# Git Auto-Sync for Windows
+# Git Auto-Sync for Windows (Pull-Only)
 
-Windows 환경에서 GitHub 양방향 자동 동기화를 수행하는 PowerShell 스크립트입니다.
+Windows 환경에서 GitHub 변경사항을 자동으로 받는 **읽기 전용** PowerShell 스크립트입니다.
+
+> **⚠ 보안 공지**: 이 저장소는 공개 저장소입니다. 로컬 변경사항은 자동으로 Push되지 않습니다.
 
 ## 버전
 
-**v2.0.0** (2025-10-29)
+**v1.0.0 (Pull-Only)** (2025-10-29)
 
 ## 기능
 
-### 양방향 동기화 (Bidirectional Sync)
+### 읽기 전용 동기화 (Pull-Only)
 
-1. **Auto-Commit & Push**
-   - 로컬 변경사항 자동 감지
-   - 자동 커밋 (타임스탬프 + 호스트명)
-   - GitHub에 자동 푸시
-   - 충돌 시 rebase 후 재시도
+1. **Auto-Pull**
+   - GitHub 원격 변경사항 자동 감지
+   - 자동 풀 (GitHub → Server)
+   - Stash로 로컬 변경사항 보호
 
-2. **Auto-Pull**
-   - GitHub 원격 변경사항 감지
-   - 자동 풀
-   - Stash/Pop으로 로컬 변경사항 보호
+2. **보안**
+   - ❌ 로컬 변경사항 자동 커밋 **비활성화**
+   - ❌ GitHub 푸시 **비활성화**
+   - ✅ 공개 저장소 - 기밀정보 유출 방지
+   - ✅ 로컬 변경사항은 Stash로 보존
 
 ## 설치 방법
 
@@ -255,24 +257,52 @@ Get-Content $logFile | Where-Object { $_ -match $(Get-Date -Format 'yyyy-MM-dd')
 [Step 1] Local Changes Check
     ↓
     ├─ Changes Found
-    │   ├─ git add -A
-    │   ├─ git commit -m "Auto-commit from HOSTNAME at YYYY-MM-DD HH:MM:SS"
-    │   ├─ git push origin main
-    │   └─ (Fail) → git pull --rebase → retry push
+    │   ├─ git stash save "Auto-stash..."
+    │   └─ ⚠ WARNING: Changes stashed (NOT pushed)
     │
     └─ No Changes → Skip
     ↓
 [Step 2] Remote Changes Check
     ↓
     ├─ Remote Updated
-    │   ├─ git stash (if needed)
-    │   ├─ git pull origin main
-    │   └─ git stash pop (if stashed)
+    │   └─ git pull origin main
     │
     └─ Already Up-to-date → Skip
     ↓
-[Complete]
+[Step 3] Stash Information
+    ↓
+    └─ Show stash list and recovery commands
+    ↓
+[Complete] (Pull-Only Mode)
 ```
+
+## 보안 특징
+
+### 로컬 변경사항 처리
+
+```powershell
+# 로컬 변경 감지 시
+⚠ WARNING: Local changes detected (will NOT be pushed - Read-Only Mode)
+⚠ SECURITY NOTICE: This is a public repository.
+⚠ Local changes will be stashed before pull to prevent conflicts.
+
+# Stash로 보존
+git stash save "Auto-stash before pull at 2025-10-29 15:30:00 on SERVER01"
+
+# 복구 방법 안내
+To restore your changes:
+  git stash pop
+To discard stashed changes:
+  git stash drop
+```
+
+### Push 차단
+
+- ❌ `git add -A` - 실행 안 됨
+- ❌ `git commit` - 실행 안 됨
+- ❌ `git push` - 실행 안 됨
+- ✅ `git pull` - 실행됨
+- ✅ `git stash` - 로컬 변경사항 보존
 
 ## 에러 처리
 
@@ -367,29 +397,31 @@ cd C:\giipAgent
 
 ## 사용 시나리오
 
-### 시나리오 1: 서버 설정 파일 자동 백업
+### 시나리오 1: GitHub에서 스크립트 업데이트 받기
 
 ```powershell
-# giipAgent.cfg 수정 후 5분 내 자동 백업
+# GitHub에서 스크립트 수정 (다른 개발자)
+# → 5분 후 자동으로 서버에 Pull됨
+# → 최신 버전 자동 적용
+```
+
+### 시나리오 2: 로컬 설정 파일 보호
+
+```powershell
+# 서버별 설정 파일 수정 (민감정보 포함)
 notepad C:\giipAgent\giipAgent.cfg
-# → 5분 후 자동으로 GitHub에 푸시됨
+# → Stash로 보존됨
+# → GitHub에 Push 안 됨 (보안 유지)
+# → 필요시 git stash pop으로 복구
 ```
 
-### 시나리오 2: 디버깅 로그 자동 업로드
+### 시나리오 3: 중앙 집중식 배포
 
 ```powershell
-# 로그 파일 생성
-Add-Content -Path "C:\giipAgent\logs\debug.log" -Value "Debug info..."
-# → 5분 후 자동으로 GitHub에 푸시됨
-# → AI가 GitHub에서 로그 분석 가능
-```
-
-### 시나리오 3: 스크립트 중앙 배포
-
-```powershell
-# GitHub에서 스크립트 수정
-# → 모든 서버가 5분 내 자동으로 최신 버전 받음
-# → 재부팅 없이 즉시 적용
+# 개발팀이 GitHub에 코드 Push
+# → 모든 운영 서버가 5분 내 자동 Pull
+# → 수동 배포 작업 불필요
+# → 서버별 기밀정보는 보호됨
 ```
 
 ## 성능 최적화
@@ -432,12 +464,18 @@ git commit -m "Update config only"
 
 ## 버전 히스토리
 
-### v2.0.0 (2025-10-29)
-- ✨ 양방향 동기화 지원 (Auto-commit + Push + Pull)
-- ✨ 자동 커밋 기능 추가
-- ✨ Rebase 재시도 로직 추가
-- ✨ Stash/Pop 자동 처리
-- ✨ 상세 로깅 추가
+### v1.0.0 (Pull-Only) (2025-10-29)
+- ✨ 읽기 전용 모드 구현
+- ✅ GitHub → Server 단방향 동기화만 지원
+- ✅ 로컬 변경사항 Stash로 보호
+- ✅ 공개 저장소 보안 강화
+- ❌ 자동 커밋/푸시 기능 제거 (보안)
+
+## 관련 저장소
+
+- **giipAgentWin**: 공개 저장소 - Pull-Only 모드
+- **giipAgentLinux**: 공개 저장소 - Pull-Only 모드
+- **giipAgentAdmLinux**: 비공개 저장소 - 양방향 동기화 가능 (v2.0.0)
 
 ## 참고 문서
 

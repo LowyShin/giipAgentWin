@@ -1,15 +1,16 @@
 <#
 .SYNOPSIS
-    GitHub 양방향 자동 동기화 스크립트 (Windows 버전)
+    GitHub 자동 동기화 스크립트 - Pull-Only (Windows 버전)
 
 .DESCRIPTION
-    로컬 변경사항을 자동으로 커밋/푸시하고, GitHub에서 변경사항을 자동으로 풀합니다.
-    Linux의 git-auto-sync.sh와 동일한 기능을 제공합니다.
+    GitHub에서 변경사항을 자동으로 풀하는 읽기 전용 스크립트입니다.
+    공개 저장소용 - 로컬 변경사항은 Push하지 않음 (보안)
 
 .NOTES
-    Version: 2.0.0
+    Version: 1.0.0 (Pull-Only)
     Author: GIIP Team
     Last Updated: 2025-10-29
+    Security: 로컬 변경사항은 자동 커밋/푸시 하지 않음
 
 .EXAMPLE
     .\git-auto-sync.ps1
@@ -56,7 +57,7 @@ function Write-Log {
 # 시작
 # ============================================================
 Write-Log "=========================================="
-Write-Log "Git Auto-Sync v2.0.0 Started"
+Write-Log "Git Auto-Sync v1.0.0 (Pull-Only) Started"
 Write-Log "Repository: $RepoPath"
 Write-Log "Hostname: $HOSTNAME"
 Write-Log "=========================================="
@@ -110,7 +111,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Log "✓ Fetch completed successfully"
 
 # ============================================================
-# Step 1: Auto-commit and push local changes
+# Step 1: 로컬 변경사항 경고 (Push하지 않음)
 # ============================================================
 Write-Log "=========================================="
 Write-Log "Step 1: Checking local changes..."
@@ -118,52 +119,29 @@ Write-Log "=========================================="
 
 $changedFiles = git status --porcelain
 if ($changedFiles) {
-    Write-Log "⚠ Local changes detected:"
+    Write-Log "⚠ WARNING: Local changes detected (will NOT be pushed - Read-Only Mode):"
     $changedFiles -split "`n" | ForEach-Object { Write-Log "  $_" }
+    Write-Log ""
+    Write-Log "⚠ SECURITY NOTICE: This is a public repository."
+    Write-Log "⚠ Local changes will be stashed before pull to prevent conflicts."
+    Write-Log "⚠ To commit changes, please use manual git workflow."
+    Write-Log ""
     
-    Write-Log "Adding all changes to staging..."
-    git add -A 2>&1 | ForEach-Object { Write-Log "  $_" }
-    
-    $commitMessage = "Auto-commit from $HOSTNAME at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-    Write-Log "Creating commit: $commitMessage"
-    git commit -m $commitMessage 2>&1 | ForEach-Object { Write-Log "  $_" }
+    Write-Log "Stashing local changes..."
+    $stashMessage = "Auto-stash before pull at $(Get-Date -Format 'yyyy-MM-dd HH:MM:ss') on $HOSTNAME"
+    git stash save $stashMessage 2>&1 | ForEach-Object { Write-Log "  $_" }
     
     if ($LASTEXITCODE -eq 0) {
-        Write-Log "Pushing to origin/$currentBranch..."
-        git push origin $currentBranch 2>&1 | ForEach-Object { Write-Log "  $_" }
-        
-        if ($LASTEXITCODE -eq 0) {
-            Write-Log "✓ Push succeeded"
-        } else {
-            Write-Log "ERROR: Push failed, attempting pull and retry..."
-            
-            Write-Log "Pulling with rebase..."
-            git pull origin $currentBranch --rebase 2>&1 | ForEach-Object { Write-Log "  $_" }
-            
-            if ($LASTEXITCODE -eq 0) {
-                Write-Log "Retrying push..."
-                git push origin $currentBranch 2>&1 | ForEach-Object { Write-Log "  $_" }
-                
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Log "✓ Push succeeded after rebase"
-                } else {
-                    Write-Log "ERROR: Push failed even after rebase"
-                    Write-Log "Manual intervention may be required"
-                    exit 1
-                }
-            } else {
-                Write-Log "ERROR: Rebase failed"
-                Write-Log "Aborting rebase..."
-                git rebase --abort 2>&1 | Out-Null
-                exit 1
-            }
-        }
+        Write-Log "✓ Local changes stashed successfully"
+        Write-Log "To recover: git stash list && git stash pop"
+        $stashed = $true
     } else {
-        Write-Log "ERROR: Commit failed"
+        Write-Log "ERROR: Failed to stash local changes"
         exit 1
     }
 } else {
-    Write-Log "✓ No local changes to commit"
+    Write-Log "✓ No local changes detected"
+    $stashed = $false
 }
 
 # ============================================================
@@ -182,45 +160,24 @@ Write-Log "Remote commit: $remoteHash"
 if ($localHash -ne $remoteHash) {
     Write-Log "⚠ Remote changes detected, pulling..."
     
-    # Stash 확인
-    $stashList = git stash list
-    $needsStash = $false
-    
-    if (git status --porcelain) {
-        Write-Log "Stashing local changes..."
-        git stash save "Auto-stash before pull at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" 2>&1 | ForEach-Object { Write-Log "  $_" }
-        $needsStash = $true
-    }
-    
-    # Pull
     Write-Log "Pulling from origin/$currentBranch..."
     git pull origin $currentBranch 2>&1 | ForEach-Object { Write-Log "  $_" }
     
     if ($LASTEXITCODE -eq 0) {
         Write-Log "✓ Pull succeeded"
-        
-        # Stash 복원
-        if ($needsStash) {
-            Write-Log "Restoring stashed changes..."
-            git stash pop 2>&1 | ForEach-Object { Write-Log "  $_" }
-            
-            if ($LASTEXITCODE -eq 0) {
-                Write-Log "✓ Stash restored successfully"
-            } else {
-                Write-Log "WARNING: Stash pop had conflicts, please resolve manually"
-                Write-Log "Use 'git stash list' to see stashed changes"
-            }
-        }
-        
         $newHash = git rev-parse HEAD
         Write-Log "Updated to commit: $newHash"
+        
+        # Show what changed
+        Write-Log "Changes pulled:"
+        git log --oneline "$localHash..$newHash" 2>&1 | ForEach-Object { Write-Log "  $_" }
     } else {
         Write-Log "ERROR: Pull failed"
         
-        # Stash 복원 시도
-        if ($needsStash) {
+        # Restore stashed changes if any
+        if ($stashed) {
             Write-Log "Restoring stashed changes..."
-            git stash pop 2>&1 | Out-Null
+            git stash pop 2>&1 | ForEach-Object { Write-Log "  $_" }
         }
         exit 1
     }
@@ -229,10 +186,30 @@ if ($localHash -ne $remoteHash) {
 }
 
 # ============================================================
+# Step 3: Stashed changes information
+# ============================================================
+if ($stashed) {
+    Write-Log "=========================================="
+    Write-Log "Step 3: Stashed changes information"
+    Write-Log "=========================================="
+    Write-Log "Your local changes are stashed and NOT pushed (Read-Only Mode)"
+    Write-Log "Stash list:"
+    git stash list | Select-Object -First 5 | ForEach-Object { Write-Log "  $_" }
+    Write-Log ""
+    Write-Log "To restore your changes:"
+    Write-Log "  git stash pop"
+    Write-Log "To discard stashed changes:"
+    Write-Log "  git stash drop"
+    Write-Log ""
+    Write-Log "⚠ NOTE: This is a public repository."
+    Write-Log "⚠ Do NOT commit sensitive information."
+}
+
+# ============================================================
 # 완료
 # ============================================================
 Write-Log "=========================================="
-Write-Log "Git Auto-Sync Completed Successfully"
+Write-Log "Git Auto-Sync (Pull-Only) Completed"
 Write-Log "=========================================="
 Write-Log ""
 
@@ -243,6 +220,15 @@ Write-Log "  Commit: $(git rev-parse --short HEAD)"
 Write-Log "  Author: $(git log -1 --format='%an <%ae>')"
 Write-Log "  Date:   $(git log -1 --format='%cd')"
 Write-Log "  Message: $(git log -1 --format='%s')"
+
+if ($stashed) {
+    $stashCount = (git stash list | Measure-Object).Count
+    Write-Log "  Stashed: YES ($stashCount items)"
+} else {
+    Write-Log "  Stashed: NO"
+}
+
 Write-Log ""
+Write-Log "✓ Sync completed successfully (Pull-Only Mode)"
 
 exit 0
