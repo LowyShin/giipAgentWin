@@ -107,7 +107,8 @@ Write-Host "[DIAG] JSON preview: $($json.Substring(0, [Math]::Min(400, $json.Len
 # KVS 업로드 (show endpoint and payload)
 if ($KVSConfig['Enabled'] -eq 'true') {
   # Build apirule.md compliant request: text에는 파라미터 이름만, jsondata에 실제 값
-  $kvspText = "KVSPut kType kKey kFactor kValue"
+  # NOTE: kValue는 text에 포함하지 않음 (jsondata 전체로 전달됨)
+  $kvspText = "KVSPut kType kKey kFactor"
   
   # jsondata에 모든 값 포함
   $kvspJsonData = @{
