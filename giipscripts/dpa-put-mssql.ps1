@@ -106,15 +106,21 @@ Write-Host "[DIAG] JSON preview: $($json.Substring(0, [Math]::Min(400, $json.Len
 
 # KVS 업로드 (show endpoint and payload)
 if ($KVSConfig['Enabled'] -eq 'true') {
-  # Build apirule.md compliant request: text + jsondata
-  $kvspText = "KVSPut $($KVSConfig['KType']) $($KVSConfig['KKey']) $KFactor"
-  # 직접 $summary를 JSON으로 변환 (value 래퍼 제거)
-  $kvspJson = $summary | ConvertTo-Json -Depth 8 -Compress
+  # Build apirule.md compliant request: text에는 파라미터 이름만, jsondata에 실제 값
+  $kvspText = "KVSPut kType kKey kFactor kValue"
+  
+  # jsondata에 모든 값 포함
+  $kvspJsonData = @{
+    kType = $KVSConfig['KType']
+    kKey = $KVSConfig['KKey']
+    kFactor = $KFactor
+    kValue = $summary
+  } | ConvertTo-Json -Depth 8 -Compress
 
   $postParams = [ordered]@{
     text     = $kvspText
     token    = $KVSConfig['UserToken']
-    jsondata = $kvspJson
+    jsondata = $kvspJsonData
   }
   $bodyStr = ($postParams.GetEnumerator() | ForEach-Object { "{0}={1}" -f $_.Key, [System.Uri]::EscapeDataString($_.Value) }) -join '&'
   $endpoint = $KVSConfig['Endpoint']
@@ -122,7 +128,7 @@ if ($KVSConfig['Enabled'] -eq 'true') {
 
   Write-Host "[DIAG] KVS Endpoint: $endpoint"
   Write-Host "[DIAG] KVS text: $kvspText"
-  Write-Host "[DIAG] KVS jsondata preview: $($kvspJson.Substring(0,[Math]::Min(400,$kvspJson.Length)))"
+  Write-Host "[DIAG] KVS jsondata preview: $($kvspJsonData.Substring(0,[Math]::Min(400,$kvspJsonData.Length)))"
 
   try {
     $resp = Invoke-RestMethod -Method Post -Uri $endpoint -Body $bodyStr -ContentType 'application/x-www-form-urlencoded'
