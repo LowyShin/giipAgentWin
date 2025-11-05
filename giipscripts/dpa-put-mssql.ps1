@@ -39,6 +39,23 @@ if (Test-Path -LiteralPath $cfgPath) {
   if (-not $SqlConnectionString -and $KVSConfig['SqlConnectionString']) {
     $SqlConnectionString = $KVSConfig['SqlConnectionString']
   }
+  
+  # KType, KKey 기본값 설정
+  if (-not $KVSConfig['KType']) {
+    $KVSConfig['KType'] = 'lssn'
+  }
+  if (-not $KVSConfig['KKey'] -and $KVSConfig['lssn']) {
+    $KVSConfig['KKey'] = $KVSConfig['lssn']
+  }
+  if (-not $KVSConfig['UserToken'] -and $KVSConfig['sk']) {
+    $KVSConfig['UserToken'] = $KVSConfig['sk']
+  }
+  if (-not $KVSConfig['Endpoint'] -and $KVSConfig['apiaddrv2']) {
+    $KVSConfig['Endpoint'] = $KVSConfig['apiaddrv2']
+  }
+  if (-not $KVSConfig['FunctionCode'] -and $KVSConfig['apiaddrcode']) {
+    $KVSConfig['FunctionCode'] = $KVSConfig['apiaddrcode']
+  }
 }
 if (-not $SqlConnectionString) {
   Write-Host "[ERROR] SqlConnectionString 파라미터 또는 giipAgent.cfg에 SqlConnectionString 항목이 필요합니다."; exit 2
