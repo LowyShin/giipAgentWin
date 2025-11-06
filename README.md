@@ -217,6 +217,38 @@ Automatically generated based on:
 - Database monitoring tools
 - Service/software bloat detection
 
+### Database Performance Monitoring (DPA)
+
+The agent includes database performance monitoring scripts:
+
+| Script | Purpose | Configuration |
+|--------|---------|---------------|
+| `dpa-put-mssql.ps1` | MS SQL Server session/query monitoring | Reads from `giipAgent.cfg` |
+| `dpa-put-mysql.ps1` | MySQL/MariaDB monitoring | Reads from `giipAgent.cfg` |
+
+**Important Configuration Mapping:**
+
+```ini
+# giipAgent.cfg - Database Monitoring Section
+sk="your-secret-key"           # → USER_TOKEN (API authentication)
+lssn="12345"                   # → K_KEY (server identifier)
+apiaddrv2="https://..."        # → KVS_ENDPOINT
+apiaddrcode="function-code"    # → FUNCTION_CODE
+```
+
+**Key Points:**
+- ⚠️ **kKey = lssn** (서버 식별자는 항상 lssn 값을 사용)
+- ⚠️ **K_TYPE = "lssn"** (기본값, 변경하지 말 것)
+- These scripts collect active sessions, CPU usage, slow queries
+- Data is uploaded to KVS (Key-Value Storage) every 5 minutes
+- Failed uploads are logged to ErrorLogs table
+
+**Schedule:**
+```powershell
+# Task Scheduler - Every 5 minutes
+*/5 * * * * pwsh -File "C:\giipAgent\giipscripts\dpa-put-mssql.ps1"
+```
+
 ---
 
 ## 🔧 Configuration Details
