@@ -33,8 +33,16 @@ catch {
 Write-GiipLog "INFO" "[CqeGet] Starting... LSSN=$($Config.lssn)"
 
 # Prepare generic Windows info
+# Prepare generic Windows info
 $hostname = [System.Net.Dns]::GetHostName()
-$os = "windows" 
+try {
+    $osInfo = Get-CimInstance Win32_OperatingSystem
+    $osName = $osInfo.Caption -replace "Microsoft\s*", "" -replace "Windows", "windows" -replace "\s+", " "
+    $os = $osName.Trim().ToLower()
+}
+catch {
+    $os = "windows (unknown)"
+} 
 
 # Prepare API Call
 # CQEQueueGet payload
