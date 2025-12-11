@@ -83,5 +83,13 @@ else {
     Write-GiipLog "INFO" "[Step 3] No task to execute."
 }
 
+# 5. DB Monitoring (Module Call)
+# Runs as independent module, collects and sends DB stats
+$dbMonitorScript = Join-Path $ModuleDir "DbMonitor.ps1"
+if (Test-Path $dbMonitorScript) {
+    Write-GiipLog "INFO" "[Step 4] Running DB Monitor..."
+    & $dbMonitorScript
+}
+
 Write-GiipLog "INFO" "=== giipAgent3.ps1 Completed ==="
 exit 0
