@@ -74,12 +74,12 @@ foreach ($db in $dbList) {
     try {
         $mdb_id = $db.mdb_id
         $db_type = $db.db_type
-        $host = $db.db_host
+        $dbHost = $db.db_host
         $port = $db.db_port
         $user = $db.db_user
         $pass = $db.db_password # Decrypted by SP
 
-        Write-GiipLog "DEBUG" "[DbMonitor] Checking DB: $mdb_id ($db_type) at $host"
+        Write-GiipLog "DEBUG" "[DbMonitor] Checking DB: $mdb_id ($db_type) at $dbHost"
         
         $stat = @{
             mdb_id      = $mdb_id
@@ -94,7 +94,7 @@ foreach ($db in $dbList) {
         if ($db_type -eq 'MSSQL') {
             # MSSQL Collection using .NET SqlClient
             try {
-                $connStr = "Server=$host,$port;Database=master;User Id=$user;Password=$pass;TrustServerCertificate=True;Connection Timeout=10;"
+                $connStr = "Server=$dbHost,$port;Database=master;User Id=$user;Password=$pass;TrustServerCertificate=True;Connection Timeout=10;"
                 $conn = New-Object System.Data.SqlClient.SqlConnection($connStr)
                 $conn.Open()
                 
@@ -110,10 +110,7 @@ foreach ($db in $dbList) {
                 $reader = $cmd.ExecuteReader()
                 if ($reader.Read()) {
                     $stat.threads = $reader["threads"]
-                    $stat.qps = $reader["qps"] # Note: This is raw counter, strictly strictly needs delta calculation. 
-                    # For MVP, we send raw value, backend or frontend can calc delta? 
-                    # Or we just send 'active_requests' for now as QPS proxy is hard stateless.
-                    # Let's use 'Batch Requests/sec' raw.
+                    $stat.qps = $reader["qps"]
                     
                     $mem_kb = $reader["memory_kb"]
                     $stat.memory = [math]::Round($mem_kb / 1024)
@@ -125,7 +122,7 @@ foreach ($db in $dbList) {
                 $statsList += $stat
             }
             catch {
-                Write-GiipLog "WARN" "[DbMonitor] MSSQL Connection failed for $host: $_"
+                Write-GiipLog "WARN" "[DbMonitor] MSSQL Connection failed for $dbHost: $_"
             }
         }
         elseif ($db_type -match 'MySQL|MariaDB') {
@@ -136,7 +133,7 @@ foreach ($db in $dbList) {
             if (Test-Path $dllPath) {
                 try {
                     [void][System.Reflection.Assembly]::LoadFile($dllPath)
-                    $connStr = "Server=$host;Port=$port;Uid=$user;Pwd=$pass;SslMode=None;Connection Timeout=10;"
+                    $connStr = "Server=$dbHost;Port=$port;Uid=$user;Pwd=$pass;SslMode=None;Connection Timeout=10;"
                     $conn = New-Object MySql.Data.MySqlClient.MySqlConnection($connStr)
                     $conn.Open()
                     
@@ -164,11 +161,11 @@ foreach ($db in $dbList) {
                     $statsList += $stat
                 }
                 catch {
-                    Write-GiipLog "WARN" "[DbMonitor] MySQL Error for $host: $_"
+                    Write-GiipLog "WARN" "[DbMonitor] MySQL Error for $dbHost: $_"
                 }
             }
             else {
-                Write-GiipLog "WARN" "[DbMonitor] Skipping MySQL $host: MySql.Data.dll not found in lib."
+                Write-GiipLog "WARN" "[DbMonitor] Skipping MySQL $dbHost: MySql.Data.dll not found in lib."
             }
         }
         else {
