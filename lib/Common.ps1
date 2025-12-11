@@ -139,6 +139,13 @@ function Invoke-GiipApiV2 {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
     try {
+        # DEBUG: Print Request Details as requested
+        Write-Host "----------------[ API DEBUG ]----------------" -ForegroundColor Cyan
+        Write-Host "URL : $Uri"
+        Write-Host "CMD : $CommandText"
+        Write-Host "JSON: $JsonData"
+        Write-Host "---------------------------------------------" -ForegroundColor Cyan
+
         $response = Invoke-RestMethod -Uri $Uri -Method Post -Body $Body -TimeoutSec 30
         return $response
     }
