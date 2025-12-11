@@ -57,7 +57,6 @@ function Get-GiipConfig {
     $candidates = @()
     if ($Global:BaseDir) {
         $candidates += (Join-Path $Global:BaseDir "../giipAgent.cfg")
-        $candidates += (Join-Path $Global:BaseDir "giipAgent.cfg")
     }
     $candidates += (Join-Path $env:USERPROFILE "giipAgent.cfg")
 
