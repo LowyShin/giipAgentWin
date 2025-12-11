@@ -20,11 +20,20 @@ function Write-GiipLog {
 
     # File Output
     try {
-        $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
-        $LogDir = Join-Path $ScriptDir $LOG_DIR_REL
-        # If running from lib, go up one more level if needed, but usually strictly relative to entry script is better.
-        # However, to be safe, let's assume $Global:BaseDir is set by Main, or derive from here.
-        if ($Global:BaseDir) { $LogDir = Join-Path $Global:BaseDir $LOG_DIR_REL }
+        $LogBase = $Global:BaseDir
+        if (-not $LogBase) {
+            # Fallback attempt
+            if ($PSScriptRoot) { $LogBase = $PSScriptRoot }
+            else { 
+                $myPath = $MyInvocation.MyCommand.Path
+                if ($myPath) { $LogBase = Split-Path -Path $myPath -Parent }
+            }
+        }
+        
+        # Final Fallback to current dir
+        if (-not $LogBase) { $LogBase = Get-Location }
+
+        $LogDir = Join-Path $LogBase $LOG_DIR_REL
         
         if (-not (Test-Path -LiteralPath $LogDir)) {
             New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
@@ -35,7 +44,7 @@ function Write-GiipLog {
     }
     catch {
         # Fallback if logging fails
-        Write-Host "[ERROR] Failed to write log: $_"
+        # Write-Host "[ERROR] Failed to write log: $_" 
     }
 }
 #endregion
