@@ -122,7 +122,7 @@ foreach ($db in $dbList) {
                 $statsList += $stat
             }
             catch {
-                Write-GiipLog "WARN" "[DbMonitor] MSSQL Connection failed for $dbHost: $_"
+                Write-GiipLog "WARN" "[DbMonitor] MSSQL Connection failed for $($dbHost): $_"
             }
         }
         elseif ($db_type -match 'MySQL|MariaDB') {
@@ -161,11 +161,11 @@ foreach ($db in $dbList) {
                     $statsList += $stat
                 }
                 catch {
-                    Write-GiipLog "WARN" "[DbMonitor] MySQL Error for $dbHost: $_"
+                    Write-GiipLog "WARN" "[DbMonitor] MySQL Error for $($dbHost): $_"
                 }
             }
             else {
-                Write-GiipLog "WARN" "[DbMonitor] Skipping MySQL $dbHost: MySql.Data.dll not found in lib."
+                Write-GiipLog "WARN" "[DbMonitor] Skipping MySQL $($dbHost): MySql.Data.dll not found in lib."
             }
         }
         else {
