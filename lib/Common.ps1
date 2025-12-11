@@ -56,14 +56,16 @@ function Get-GiipConfig {
     
     $candidates = @()
     if ($Global:BaseDir) {
-        $candidates += (Join-Path $Global:BaseDir "giipAgent.cfg")
         $candidates += (Join-Path $Global:BaseDir "../giipAgent.cfg")
+        $candidates += (Join-Path $Global:BaseDir "giipAgent.cfg")
     }
     $candidates += (Join-Path $env:USERPROFILE "giipAgent.cfg")
 
     foreach ($path in $candidates) {
         if (Test-Path $path) {
-            Write-GiipLog "INFO" "Loading config from: $path"
+            # Try to resolve to absolute path for clarity
+            $fullPath = Resolve-Path $path
+            Write-GiipLog "INFO" "Loading config from: $fullPath"
             return (Parse-ConfigFile -Path $path)
         }
     }
