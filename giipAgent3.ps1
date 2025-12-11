@@ -6,42 +6,49 @@
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
+$Global:BaseDir = $ScriptDir
 $ModuleDir = Join-Path $ScriptDir "giipscripts\modules"
 $DataDir = Join-Path $ScriptDir "data"
 $QueueFile = Join-Path $DataDir "queue.json"
 $LibDir = Join-Path $ScriptDir "lib"
 
-# Load Common for logging (optional, can relay logs)
+# Load Common for logging
 try {
     . (Join-Path $LibDir "Common.ps1")
 }
-catch { Write-Host "Warning: Common lib not loaded in main script." }
+catch { 
+    Write-Host "Warning: Common lib not loaded. ($_)" 
+}
+
+if (-not (Get-Command "Write-GiipLog" -ErrorAction SilentlyContinue)) {
+    function Write-GiipLog { param($Level, $Message) Write-Host "[$Level] $Message" }
+}
 
 Write-GiipLog "INFO" "=== giipAgent3.ps1 Started ==="
 
-# 1. Clean State (Module Call)
+# 2. Clean State (Module Call)
 $cleanScript = Join-Path $ModuleDir "CleanState.ps1"
 if (Test-Path $cleanScript) {
     Write-GiipLog "INFO" "[Step 1] Cleaning state..."
-    & "powershell.exe" -ExecutionPolicy Bypass -File $cleanScript
+    & $cleanScript
 }
 else {
     Write-GiipLog "ERROR" "CleanState module not found: $cleanScript"
     exit 1
 }
 
-# 2. CQE Get (Module Call)
+# 3. CQE Get (Module Call)
 $cqeScript = Join-Path $ModuleDir "CqeGet.ps1"
 if (Test-Path $cqeScript) {
     Write-GiipLog "INFO" "[Step 2] Fetching CQE Queue..."
-    & "powershell.exe" -ExecutionPolicy Bypass -File $cqeScript
+    & $cqeScript
 }
 else {
     Write-GiipLog "ERROR" "CqeGet module not found: $cqeScript"
     exit 1
 }
 
-# 3. Check & Execute
+# 4. Check & Execute
 if (Test-Path $QueueFile) {
     Write-GiipLog "INFO" "[Step 3] Task found in $QueueFile. Processing..."
     
@@ -57,7 +64,7 @@ if (Test-Path $QueueFile) {
             $scriptBody | Set-Content -Path $tmpTask -Encoding UTF8
             
             # Execute
-            & "powershell.exe" -ExecutionPolicy Bypass -File $tmpTask
+            & $tmpTask
             
             Write-GiipLog "INFO" "Task Execution Completed."
             
