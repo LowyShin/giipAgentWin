@@ -144,10 +144,12 @@ foreach ($db in $dbList) {
                     $stat.qps = $reader["qps"]
                     
                     $mem_kb = $reader["memory_kb"]
-                    $stat.memory = [math]::Round($mem_kb / 1024)
+                    $stat.memory = [math]::Round([double]$mem_kb / 1024, 0)
                     
                     $startTime = $reader["start_time"]
-                    $stat.uptime = [math]::Round((Get-Date) - $startTime).TotalSeconds
+                    if ($startTime) {
+                        $stat.uptime = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 0)
+                    }
                 }
                 $conn.Close()
                 $statsList += $stat
