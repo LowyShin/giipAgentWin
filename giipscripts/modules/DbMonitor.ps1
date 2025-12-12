@@ -38,7 +38,17 @@ try {
     # Note: Invoke-GiipApiV2 sends lssn/hostname/os inside JSON payload by default, 
     # but MdbList endpoint might just need 'code=MdbList'.
     # Assuming standard API call structure:
+    # Debug Info
+    $maskedSk = if ($Config.sk -and $Config.sk.Length -gt 4) { $Config.sk.Substring(0, 4) + "****" } else { "Invalid SK" }
+    Write-GiipLog "INFO" "[DbMonitor] Requesting DB List using SK: $maskedSk"
+
     $response = Invoke-GiipApiV2 -Config $Config -CommandText "MdbList" -JsonData "{}"
+    
+    # Detailed Debug
+    Write-GiipLog "DEBUG" "[DbMonitor] Raw Response Type: $($response.GetType().Name)"
+    if ($response.RstVal) {
+        Write-GiipLog "INFO" "[DbMonitor] API Result: Val=$($response.RstVal), Msg=$($response.RstMsg)"
+    }
     
     $dbList = $null
     # Handle API response structure (could be raw array or wrapped in object)
