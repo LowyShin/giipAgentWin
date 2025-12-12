@@ -216,7 +216,8 @@ if ($statsList.Count -gt 0) {
         $jsonPayload = $statsList | ConvertTo-Json -Compress
         Write-GiipLog "INFO" "[DbMonitor] Sending stats for $($statsList.Count) databases..."
         
-        $response = Invoke-GiipApiV2 -Config $Config -CommandText "MdbStatsUpdate" -JsonData $jsonPayload
+        # Must include 'jsondata' to pass payload to SP
+        $response = Invoke-GiipApiV2 -Config $Config -CommandText "MdbStatsUpdate jsondata" -JsonData $jsonPayload
         
         if ($response.RstVal -eq "200") {
             Write-GiipLog "INFO" "[DbMonitor] Success."
