@@ -46,8 +46,9 @@ try {
     $reqData = @{ lssn = $Config.lssn }
     $reqJson = $reqData | ConvertTo-Json -Compress
     
-    # Must include 'jsondata' in CommandText to tell API to pass the JSON payload to SP
-    $response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseList jsondata" -JsonData $reqJson
+    # Use unified SP 'pApiManagedDatabaseListForAgentbySk' which supports optional LSSN filtering
+    # API Rule: text="Cmd ParamName" -> exec pApiCmdBySk @sk, @ParamValue
+    $response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson
     
     # Detailed Debug
     Write-GiipLog "DEBUG" "[DbMonitor] Raw Response Type: $($response.GetType().Name)"
