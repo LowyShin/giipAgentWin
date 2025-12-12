@@ -46,27 +46,42 @@ try {
     
     # Detailed Debug
     Write-GiipLog "DEBUG" "[DbMonitor] Raw Response Type: $($response.GetType().Name)"
+    try {
+        $debugJson = $response | ConvertTo-Json -Depth 2 -Compress
+        Write-GiipLog "DEBUG" "[DbMonitor] Raw Response Content: $debugJson"
+    }
+    catch {
+        Write-GiipLog "DEBUG" "[DbMonitor] Raw Response Content: (Cannot serialize)"
+    }
+
     if ($response.RstVal) {
         Write-GiipLog "INFO" "[DbMonitor] API Result: Val=$($response.RstVal), Msg=$($response.RstMsg)"
     }
     
     $dbList = $null
-    # Handle API response structure (could be raw array or wrapped in object)
-    if ($response.data) { $dbList = $response.data }
-    elseif ($response.RstVal) { 
-        # API returns error or no data
-        if ($response.RstVal -ne "200") {
-            Write-GiipLog "WARN" "[DbMonitor] MdbList API returned $($response.RstVal): $($response.RstMsg)"
-            exit 0 
-        }
-        $dbList = $response.data # Assuming data is attached even if flat object is returned (unlikely)
-    }
-    # Fallback: check if response itself is array
-    if (-not $dbList -and $response -is [Array]) { $dbList = $response }
     
+    # Case 1: Wrapped in 'data' property
+    if ($response.data) { 
+        $dbList = $response.data 
+    }
+    # Case 2: Array of DBs (Standard list)
+    elseif ($response -is [Array]) { 
+        $dbList = $response 
+    }
+    # Case 3: Single DB Object (1 item returned) - Check for known property
+    elseif ($response.mdb_id) {
+        Write-GiipLog "INFO" "[DbMonitor] Single DB detected."
+        $dbList = @($response)
+    }
+
     if (-not $dbList) {
-        Write-GiipLog "INFO" "[DbMonitor] No databases found to monitor."
+        Write-GiipLog "INFO" "[DbMonitor] No databases found to monitor (dbList is empty)."
         exit 0
+    }
+
+    # Ensure it's an array/collection for the loop
+    if (-not ($dbList -is [Array] -or $dbList -is [System.Collections.IEnumerable])) {
+        $dbList = @($dbList)
     }
 
     Write-GiipLog "INFO" "[DbMonitor] Found $($dbList.Count) databases to monitor."
