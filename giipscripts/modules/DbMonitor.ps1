@@ -42,7 +42,12 @@ try {
     $maskedSk = if ($Config.sk -and $Config.sk.Length -gt 4) { $Config.sk.Substring(0, 4) + "****" } else { "Invalid SK" }
     Write-GiipLog "INFO" "[DbMonitor] Requesting DB List using SK: $maskedSk"
 
-    $response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseList" -JsonData "{}"
+    # Send LSSN to allow filtering by gateway_lssn on server side
+    $reqData = @{ lssn = $Config.lssn }
+    $reqJson = $reqData | ConvertTo-Json -Compress
+    
+    # Must include 'jsondata' in CommandText to tell API to pass the JSON payload to SP
+    $response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseList jsondata" -JsonData $reqJson
     
     # Detailed Debug
     Write-GiipLog "DEBUG" "[DbMonitor] Raw Response Type: $($response.GetType().Name)"
