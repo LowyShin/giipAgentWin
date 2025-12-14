@@ -61,7 +61,7 @@ catch {
 }
 
 # 2. Collect Connections
-$statsList = @()
+
 
 foreach ($db in $dbList) {
     try {
@@ -104,11 +104,30 @@ foreach ($db in $dbList) {
                 $conn.Close()
 
                 if ($connList.Count -gt 0) {
-                    $stat = @{
-                        mdb_id         = $mdb_id
-                        db_connections = ($connList | ConvertTo-Json -Compress -Depth 2)
+                    Write-GiipLog "INFO" "[DbConnectionList] Sending connection data for DB: $mdb_id"
+                    
+                    # [Modern KVSPut Pattern per Linux Agent]
+                    # Text: Parameter names only
+                    # JsonData: Actual values { kType, kKey, kFactor, kValue }
+                    
+                    $payload = @{
+                        kType   = "database"
+                        kKey    = "$mdb_id"
+                        kFactor = "db_connections"
+                        kValue  = $connList
                     }
-                    $statsList += $stat
+                    
+                    $jsonPayload = $payload | ConvertTo-Json -Compress -Depth 5
+                    $cmdText = "KVSPut kType kKey kFactor"
+
+                    $response = Invoke-GiipApiV2 -Config $Config -CommandText $cmdText -JsonData $jsonPayload
+                    
+                    if ($response.RstVal -eq "200") {
+                        Write-GiipLog "INFO" "[DbConnectionList] Success for DB $mdb_id."
+                    }
+                    else {
+                        Write-GiipLog "WARN" "[DbConnectionList] API Error for DB $mdb_id : $($response.RstVal) - $($response.RstMsg)"
+                    }
                 }
             }
             catch {
@@ -121,28 +140,5 @@ foreach ($db in $dbList) {
     }
 }
 
-# 3. Send Data
-if ($statsList.Count -gt 0) {
-    try {
-        $jsonPayload = $statsList | ConvertTo-Json -Compress
-        Write-GiipLog "INFO" "[DbConnectionList] Sending data for $($statsList.Count) databases..."
-        
-        # Reuse MdbStatsUpdate API (Assuming it handles partial updates or specific fields)
-        $response = Invoke-GiipApiV2 -Config $Config -CommandText "MdbStatsUpdate jsondata" -JsonData $jsonPayload
-        
-        if ($response.RstVal -eq "200") {
-            Write-GiipLog "INFO" "[DbConnectionList] Success."
-        }
-        else {
-            Write-GiipLog "WARN" "[DbConnectionList] API Error: $($response.RstVal) - $($response.RstMsg)"
-        }
-    }
-    catch {
-        Write-GiipLog "ERROR" "[DbConnectionList] Failed to send data: $_"
-    }
-}
-else {
-    Write-GiipLog "INFO" "[DbConnectionList] No connection data collected."
-}
-
+Write-GiipLog "INFO" "[DbConnectionList] Completed."
 exit 0
