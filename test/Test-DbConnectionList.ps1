@@ -11,7 +11,7 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
 
 # If inside /test, go up one level to find root
-if (Split-Path -Path $ScriptDir -Leaf -eq "test") {
+if ((Split-Path -Path $ScriptDir -Leaf) -eq "test") {
     $AgentRoot = Split-Path -Path $ScriptDir -Parent
 }
 else {
