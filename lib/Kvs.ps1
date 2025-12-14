@@ -99,4 +99,4 @@ function Invoke-GiipKvsPut {
     return $response
 }
 
-Export-ModuleMember -Function Invoke-GiipKvsPut
+
