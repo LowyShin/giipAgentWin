@@ -151,6 +151,27 @@ foreach ($db in $dbList) {
                         $stat.uptime = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 0)
                     }
                 }
+                $reader.Close()
+
+                # [Feature] Active Client IP Collection (Net3D)
+                # Collect client IP and program name for topology visualization
+                $cmdConn = $conn.CreateCommand()
+                $cmdConn.CommandText = @"
+                    SELECT 
+                        client_net_address,
+                        program_name,
+                        COUNT(*) as conn_count
+                    FROM sys.dm_exec_sessions s
+                    JOIN sys.dm_exec_connections c ON s.session_id = c.session_id
+                    GROUP BY client_net_address, program_name
+                    FOR JSON PATH
+"@
+                $connJson = $cmdConn.ExecuteScalar()
+                if ($connJson) {
+                    # Store as stringified JSON to pass through API
+                    $stat.db_connections = $connJson
+                }
+
                 $conn.Close()
                 $statsList += $stat
             }
