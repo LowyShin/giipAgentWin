@@ -35,7 +35,10 @@ try {
     . (Join-Path $LibDir "Common.ps1")
     . (Join-Path $LibDir "KVS.ps1")
 }
-catch { Write-Error "Failed to load libraries"; exit 1 }
+catch { 
+    Write-Error "Failed to load libraries: $_"
+    exit 1 
+}
 
 # Load Config
 try { $Config = Get-GiipConfig } catch { Write-Error "Failed to load Config"; exit 1 }
