@@ -156,6 +156,7 @@ foreach ($db in $dbList) {
                 # [Feature] Active Client IP Collection (Net3D)
                 try {
                     $cmdConn = $conn.CreateCommand()
+                    # Removed 'FOR JSON PATH' for compatibility with older SQL Servers (Pre-2016)
                     $cmdConn.CommandText = @"
                         SELECT 
                             client_net_address,
@@ -164,12 +165,22 @@ foreach ($db in $dbList) {
                         FROM sys.dm_exec_sessions s
                         JOIN sys.dm_exec_connections c ON s.session_id = c.session_id
                         GROUP BY client_net_address, program_name
-                        FOR JSON PATH
 "@
-                    $connJson = $cmdConn.ExecuteScalar()
-                    if ($connJson) {
+                    $readerConn = $cmdConn.ExecuteReader()
+                    $connList = @()
+                    
+                    while ($readerConn.Read()) {
+                        $connList += @{
+                            client_net_address = $readerConn["client_net_address"]
+                            program_name       = $readerConn["program_name"]
+                            conn_count         = $readerConn["conn_count"]
+                        }
+                    }
+                    $readerConn.Close()
+
+                    if ($connList.Count -gt 0) {
                         # Store as stringified JSON to pass through API
-                        $stat.db_connections = $connJson
+                        $stat.db_connections = ($connList | ConvertTo-Json -Compress -Depth 2)
                     }
                 }
                 catch {
