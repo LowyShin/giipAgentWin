@@ -120,13 +120,26 @@ foreach ($db in $dbList) {
                     $jsonPayload = $payload | ConvertTo-Json -Compress -Depth 5
                     $cmdText = "KVSPut kType kKey kFactor"
 
+                    Write-GiipLog "INFO" "--- [DEBUG REQ] ---"
+                    Write-GiipLog "INFO" "CMD : $cmdText"
+                    Write-GiipLog "INFO" "JSON: $jsonPayload"
+                    Write-GiipLog "INFO" "-------------------"
+
                     $response = Invoke-GiipApiV2 -Config $Config -CommandText $cmdText -JsonData $jsonPayload
                     
+                    Write-GiipLog "INFO" "--- [DEBUG RES] ---"
+                    Write-GiipLog "INFO" "CreateType: $($response.GetType().Name)"
+                    Write-GiipLog "INFO" "Raw: $($response | ConvertTo-Json -Depth 2 -Compress)"
+                    Write-GiipLog "INFO" "-------------------"
+
                     if ($response.RstVal -eq "200") {
                         Write-GiipLog "INFO" "[DbConnectionList] Success for DB $mdb_id."
                     }
                     else {
-                        Write-GiipLog "WARN" "[DbConnectionList] API Error for DB $mdb_id : $($response.RstVal) - $($response.RstMsg)"
+                        Write-GiipLog "WARN" "[DbConnectionList] API Error for DB $mdb_id"
+                        Write-GiipLog "WARN" "RstVal: '$($response.RstVal)'"
+                        Write-GiipLog "WARN" "RstMsg: '$($response.RstMsg)'"
+                        Write-GiipLog "WARN" "FullObj: $($response | ConvertTo-Json -Compress)"
                     }
                 }
             }
