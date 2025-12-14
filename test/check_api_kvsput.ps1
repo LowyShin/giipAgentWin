@@ -10,15 +10,25 @@ param(
 $ErrorActionPreference = "Stop"
 
 # 1. Setup Environment
-$ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
+$ScriptPath = $MyInvocation.MyCommand.Path
+# Ensure absolute path even if executed relatively (e.g., .\test\script.ps1)
+if (-not [System.IO.Path]::IsPathRooted($ScriptPath)) {
+    $ScriptPath = Join-Path (Get-Location) $ScriptPath
+}
+$ScriptDir = Split-Path -Path $ScriptPath -Parent
+
+# Determine AgentRoot (Handle running from test dir or agent root)
 if ((Split-Path -Path $ScriptDir -Leaf) -eq "test") {
     $AgentRoot = Split-Path -Path $ScriptDir -Parent
 }
 else {
     $AgentRoot = $ScriptDir
 }
+
 $LibDir = Join-Path $AgentRoot "lib"
 $Global:BaseDir = $AgentRoot
+
+Write-Host "DEBUG: LibDir=$LibDir" -ForegroundColor DarkGray
 
 # Load Libraries
 try { 
