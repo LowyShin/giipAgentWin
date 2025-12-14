@@ -44,7 +44,8 @@ function Test-KVSPut {
         $response = Invoke-GiipKvsPut -Config $Config -Type $kType -Key $kKey -Factor $kFactor -Value $kValueObj
         $VerbosePreference = "SilentlyContinue"
 
-        Write-Host "RES Code: $($response.RstVal)" -ForegroundColor ($response.RstVal -eq 200 ? "Green" : "Red")
+        if ($response.RstVal -eq 200) { $color = "Green" } else { $color = "Red" }
+        Write-Host "RES Code: $($response.RstVal)" -ForegroundColor $color
         Write-Host "RES Msg : $($response.RstMsg)"
         
         if ($response.RstMsg -eq "No data found") {
