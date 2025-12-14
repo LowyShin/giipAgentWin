@@ -91,5 +91,12 @@ if (Test-Path $dbMonitorScript) {
     & $dbMonitorScript
 }
 
+# 6. DB Connection Monitoring (Net3D)
+$dbConnScript = Join-Path $ModuleDir "DbConnectionList.ps1"
+if (Test-Path $dbConnScript) {
+    Write-GiipLog "INFO" "[Step 5] Running DB Connection List (Net3D)..."
+    & $dbConnScript
+}
+
 Write-GiipLog "INFO" "=== giipAgent3.ps1 Completed ==="
 exit 0
