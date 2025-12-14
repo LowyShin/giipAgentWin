@@ -57,11 +57,14 @@ function Test-KVSPut {
         $response = Invoke-GiipKvsPut -Config $Config -Type $kType -Key $kKey -Factor $kFactor -Value $kValueObj
         $VerbosePreference = "SilentlyContinue"
 
-        if ($response.RstVal -eq 200) { $color = "Green" } else { $color = "Red" }
-        Write-Host "RES Code: $($response.RstVal)" -ForegroundColor $color
-        Write-Host "RES Msg : $($response.RstMsg)"
+        # Handle Array Response (API V2 often returns wrapped array)
+        if ($response -is [Array]) { $resObj = $response[0] } else { $resObj = $response }
+
+        if ($resObj.RstVal -eq 200) { $color = "Green" } else { $color = "Red" }
+        Write-Host "RES Code: $($resObj.RstVal)" -ForegroundColor $color
+        Write-Host "RES Msg : $($resObj.RstMsg)"
         
-        if ($response.RstMsg -eq "No data found") {
+        if ($resObj.RstMsg -eq "No data found") {
             Write-Host " -> CAUSE: SP likely rejected this kType/kKey combination." -ForegroundColor Red
         }
     }
