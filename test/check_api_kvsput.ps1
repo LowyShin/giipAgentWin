@@ -83,3 +83,34 @@ Test-KVSPut -kType "lssn" -kKey $Config.lssn -kFactor "test_lssn_factor" -kValue
 
 # Case 2: kType = 'database' (Target)
 Test-KVSPut -kType "database" -kKey $MdbId -kFactor "test_db_factor" -kValueObj @{ msg = "Hello from db type" }
+
+# Case 3: Force Manual JSON (User Request)
+function Test-KVSPut-Force {
+    Write-Host "`n[TEST] Force Manual JSON Payload" -ForegroundColor Yellow
+    
+    $manualJson = '{"kType":"database", "kKey":"8", "kFactor":"test_lssn_factor", "msg":"Hello from lssn type"}'
+    
+    # cmdText MUST be kept as per instruction
+    $cmdText = "KVSPut kType kKey kFactor"
+    
+    Write-Host "REQ JSON: $manualJson" -ForegroundColor Gray
+    
+    try {
+        $response = Invoke-GiipApiV2 -Config $Config -CommandText $cmdText -JsonData $manualJson
+        
+        Write-Host "FULL RES: $($response | ConvertTo-Json -Depth 5 -Compress)" -ForegroundColor Gray
+        
+        # Handle Array Response
+        if ($response -is [Array]) { $resObj = $response[0] } else { $resObj = $response }
+        # Handle inner data wrap
+        if ($resObj.data -and $resObj.data -is [Array]) { $resObj = $resObj.data[0] }
+
+        if ($resObj.RstVal -eq 200) { $color = "Green" } else { $color = "Red" }
+        Write-Host "RES Code: $($resObj.RstVal)" -ForegroundColor $color
+        Write-Host "RES Msg : $($resObj.RstMsg)"
+    }
+    catch {
+        Write-Host "EXCEPTION: $_" -ForegroundColor Red
+    }
+}
+Test-KVSPut-Force
