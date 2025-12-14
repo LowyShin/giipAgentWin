@@ -57,8 +57,13 @@ function Test-KVSPut {
         $response = Invoke-GiipKvsPut -Config $Config -Type $kType -Key $kKey -Factor $kFactor -Value $kValueObj
         $VerbosePreference = "SilentlyContinue"
 
+        # DEBUG: Print Raw Object Structure
+        Write-Host "FULL RES: $($response | ConvertTo-Json -Depth 5 -Compress)" -ForegroundColor Gray
+
         # Handle Array Response (API V2 often returns wrapped array)
         if ($response -is [Array]) { $resObj = $response[0] } else { $resObj = $response }
+        # Handle inner data wrap if exists (e.g. response.data[0])
+        if ($resObj.data -and $resObj.data -is [Array]) { $resObj = $resObj.data[0] }
 
         if ($resObj.RstVal -eq 200) { $color = "Green" } else { $color = "Red" }
         Write-Host "RES Code: $($resObj.RstVal)" -ForegroundColor $color
