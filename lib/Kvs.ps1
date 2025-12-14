@@ -1,116 +1,102 @@
-
 # ============================================================================
-# giipAgent KVS Logging Library (PowerShell)
-# Version: 2.00
-# Date: 2025-01-10
-# Purpose: KVS (Key-Value Store) logging functions for execution tracking
-# Rule: Follow giipapi_rules.md - text contains parameter names, jsondata contains actual values
+# KVS.ps1
+# Purpose: Common library for Key-Value Store (KVS) operations
+# Usage: . (Join-Path $LibDir "KVS.ps1")
+# Dependencies: Common.ps1 (for Invoke-GiipApiV2)
 # ============================================================================
 
-# Load Common.ps1 if not already loaded (defensive)
-if (-not (Get-Command Invoke-GiipApiV2 -ErrorAction SilentlyContinue)) {
-    $scriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
-    $commonPath = Join-Path $scriptDir "Common.ps1"
-    if (Test-Path $commonPath) { . $commonPath }
-}
-
-# Function: Save execution log to KVS (giipagent factor)
-# Event types: startup, queue_check, script_execution, error, shutdown, gateway_init, heartbeat
-function Save-ExecutionLog {
+function Invoke-GiipKvsPut {
+    <#
+    .SYNOPSIS
+        Saves a Key-Value pair to the Giip KVS via API.
+    
+    .DESCRIPTION
+        Constructs the standard KVS payload (Text + JsonData) and calls Invoke-GiipApiV2.
+        Follows the Linux Agent's 'kvs.sh' standard:
+        - Text: "KVSPut kType kKey kFactor"
+        - JsonData: { kType, kKey, kFactor, kValue (Raw/Object) }
+        
+    .PARAMETER Config
+        The Agent configuration object (HashTable).
+        
+    .PARAMETER Type
+        The kType (e.g., 'lssn', 'database').
+        
+    .PARAMETER Key
+        The kKey (e.g., LSSN, MdbId).
+        
+    .PARAMETER Factor
+        The kFactor (e.g., 'db_connections').
+        
+    .PARAMETER Value
+        The value to store. Can be a String, Hashtable, or Array.
+        If it's an object, it will be embedded as a JSON object in the 'kValue' field.
+    #>
+    [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][hashtable]$Config,
-        [Parameter(Mandatory)][string]$EventType,
-        [Parameter(Mandatory)]$DetailsObj # Hashtable or Object or JSON String
+        [Parameter(Mandatory = $true)]
+        [System.Collections.IDictionary]$Config,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$Type,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$Key,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$Factor,
+        
+        [Parameter(Mandatory = $true)]
+        [object]$Value
     )
-
-    $lssn = $Config.lssn
-    if (-not $lssn) { Write-GiipLog "ERROR" "[KVS] Missing LSSN"; return }
-
-    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    $hostname = [System.Net.Dns]::GetHostName()
     
-    # Determine mode
-    $mode = "normal"
-    if ($Config.is_gateway -eq "1" -or $Config.is_gateway -eq $true) { $mode = "gateway" }
-
-    # Ensure details is valid JSON
-    $detailsJson = if ($DetailsObj -is [string]) { 
-        # Verify if string is JSON, if not treat as text value?
-        # Linux version: "details_json embedded as raw data"
-        # If it's a string that implies JSON, use it. If plain text, wrap it?
-        # Linux kvs.sh says: "details_json이 JSON이면 JSON으로, 텍스트면 텍스트로 그대로 저장됨"
-        $DetailsObj 
-    }
-    else { 
-        $DetailsObj | ConvertTo-Json -Depth 10 -Compress 
-    }
-
-    # Build kValue Object
-    # We construct a hashtable effectively validation the JSON structure
-    $kValueObj = @{
-        event_type = $EventType
-        timestamp  = $timestamp
-        lssn       = $lssn
-        hostname   = $hostname
-        mode       = $mode
-        version    = "3.00" # Consistent with Linux V3
-        details    = $DetailsObj # If this is an object, ConvertTo-Json will handle it. If string, likely treated as string.
-        # However, to be raw data as-is, we should let ConvertTo-Json handle the outer wrapping.
-        # But Linux constructs JSON string manually.
+    # Construct Payload
+    # Linux standard: kValue contains the raw data (object or string)
+    # We assign the object directly so ConvertTo-Json handles nested serialization properly.
+    $payload = @{
+        kType   = $Type
+        kKey    = $Key
+        kFactor = $Factor
+        kValue  = $Value 
     }
     
-    # In PowerShell, nested objects need care when double-encoding.
-    # We want: kValue: { "event_type":..., "details": <RAW_DATA> }
-    # If <RAW_DATA> is a JSON string, it becomes a string value in JSON? No, Linux kvs.sh treats it as raw object if possible.
-    # Line 87 kvs.sh: \"details\":${details_json}
-    # This implies details_json is inserted DIRECTLY into the JSON structure, not as a string.
-    # So if details_json is {"a":1}, kValue is {..., "details":{"a":1}}.
+    # Convert to JSON
+    # Depth 10 to ensure complex objects are fully serialized
+    $jsonPayload = $payload | ConvertTo-Json -Compress -Depth 10
     
-    # So if $DetailsObj is a JSON string, we should ConvertFrom-Json it first to nest it properly as an object,
-    # OR construct the JSON manually string-manipulation style.
-    # To be safe and cleaner in PS, let's treat $DetailsObj as an Object.
+    # [Log to File] Save JSON payload for debugging/history
+    try {
+        $base = if ($Global:BaseDir) { $Global:BaseDir } else { Split-Path -Parent $PSScriptRoot }
+        # Consistent with Common.ps1 structure (Sibling directory)
+        $logBaseDir = Join-Path $base "../giipLogs"
+        $payloadLogDir = Join-Path $logBaseDir "payloads"
+        
+        if (-not (Test-Path $payloadLogDir)) { New-Item -Path $payloadLogDir -ItemType Directory -Force | Out-Null }
+        
+        $timestamp = Get-Date -Format "yyyyMMdd_HHmmss_fff"
+        # Sanitize Key for filename (remove invalid chars)
+        $safeKey = $Key -replace '[\\/:*?"<>|]', '_'
+        $fileName = "KVSPut_${Type}_${safeKey}_${timestamp}.json"
+        $filePath = Join-Path $payloadLogDir $fileName
+        
+        $jsonPayload | Out-File -FilePath $filePath -Encoding utf8
+        Write-Verbose "[KVS] Payload saved to: $filePath"
+    }
+    catch {
+        Write-Verbose "[KVS] Failed to save payload file: $_"
+    }
     
-    $kValueJson = $kValueObj | ConvertTo-Json -Depth 10 -Compress
-
-    # Call Send-KVSPut
-    # kFactor for Save-ExecutionLog is 'giipagent' (Line 102 kvs.sh)
-    Send-KVSPut -Config $Config -kType "lssn" -kKey $lssn -kFactor "giipagent" -kValue $kValueObj
+    # Standard Command Text
+    $cmdText = "KVSPut kType kKey kFactor"
+    
+    # Debug Log (Verbose)
+    Write-Verbose "[KVS] Putting $Type / $Key / $Factor"
+    
+    # Call API
+    # Assumes Invoke-GiipApiV2 is available (from Common.ps1)
+    $response = Invoke-GiipApiV2 -Config $Config -CommandText $cmdText -JsonData $jsonPayload
+    
+    return $response
 }
 
-
-# Function: Save simple KVS key-value pair
-# Usage: Send-KVSPut -Config $Cfg -kType "lssn" -kKey "123" -kFactor "test" -kValue @{status="ok"}
-function Send-KVSPut {
-    param(
-        [Parameter(Mandatory)][hashtable]$Config,
-        [Parameter(Mandatory)][string]$kType,
-        [Parameter(Mandatory)][string]$kKey,
-        [Parameter(Mandatory)][string]$kFactor,
-        [Parameter(Mandatory)]$kValue # Object or Hashtable (will be converted to JSON)
-    )
-
-    # 1. Prepare Command Text
-    $text = "KVSPut kType kKey kFactor"
-
-    # 2. Prepare JSON Data
-    # structure: { kType, kKey, kFactor, kValue (Raw) }
-    
-    $jsonDataObj = @{
-        kType   = $kType
-        kKey    = $kKey
-        kFactor = $kFactor
-        kValue  = $kValue
-    }
-    
-    $jsonDataString = $jsonDataObj | ConvertTo-Json -Depth 10 -Compress
-    
-    # 3. Invoke API
-    $response = Invoke-GiipApiV2 -Config $Config -CommandText $text -JsonData $jsonDataString
-    
-    if ($response) {
-        Write-GiipLog "DEBUG" "KVS Saved: $kFactor (Key: $kKey)"
-    }
-    else {
-        Write-GiipLog "ERROR" "KVS Failed: $kFactor (Key: $kKey)"
-    }
-}
+Export-ModuleMember -Function Invoke-GiipKvsPut

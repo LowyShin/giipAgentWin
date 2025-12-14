@@ -12,17 +12,20 @@
 - **API**: `ManagedDatabaseListForAgent` (DB 목록 조회)
 
 ### 2.2. 출력 (Output)
-- **API**: `MdbStatsUpdate` (성능 지표 API 재사용)
+### 2.2. 출력 (Output)
+- **API**: `KVSPut` (via `Invoke-GiipKvsPut` in `KVS.ps1`)
 - **Payload (JSON)**:
-    ```json
-    [
-        {
-            "mdb_id": 101,
-            "db_connections": "[{\"client_net_address\":\"192.168.1.50\",\"program_name\":\"MyApp\",\"conn_count\":5}, ...]" 
-        }
-    ]
-    ```
-    - `db_connections`: JSON 문자열 형태 (Nested JSON String). 백엔드에서 `OPENJSON`으로 파싱하여 저장.
+    - **kType**: `"database"`
+    - **kKey**: `mdb_id` (e.g., "101")
+    - **kFactor**: `"db_connections"`
+    - **kValue**: 
+        ```json
+        [
+            {"client_net_address":"192.168.1.50","program_name":"MyApp","conn_count":5},
+            {"client_net_address":"10.0.0.5","program_name":"WebSvr","conn_count":12}
+        ]
+        ```
+    - **Note**: `kValue`는 API 전송 시 JSON 객체(Object) 그 자체로 포함되며, `KVS.ps1` 내부에서 전체 Payload와 함께 직렬화됩니다.
 
 ## 3. 상세 처리 로직 (Processing Logic)
 
@@ -50,5 +53,6 @@
 - `information_schema.processlist` 조회 예정 (현재 미구현).
 
 ### 3.3. 데이터 전송
-- 수집된 객체를 리스트(`$statsList`)에 담아 `MdbStatsUpdate` API로 전송.
-- 백엔드 SP(`pApiKVSPutbySk`)는 이 데이터를 받아 `tKVS` 테이블에 `kType='database'`, `kFactor='db_connections'`로 저장함.
+- **공통 라이브러리 사용**: `lib/KVS.ps1`의 `Invoke-GiipKvsPut` 함수를 사용.
+- **처리 방식**: 각 DB 접속 및 수집 후 루프 내에서 즉시 API 호출 (Real-time per DB).
+    - `MdbStatsUpdate`와 달리 개별 전송 방식 채택 (KVS 특성 반영).

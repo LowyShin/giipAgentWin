@@ -12,9 +12,10 @@ $LibDir = Join-Path $AgentRoot "lib"
 # Load Libraries
 try {
     . (Join-Path $LibDir "Common.ps1")
+    . (Join-Path $LibDir "KVS.ps1")
 }
 catch {
-    Write-Host "FATAL: Failed to load Common.ps1 from $LibDir"
+    Write-Host "FATAL: Failed to load libraries from $LibDir"
     exit 1
 }
 
@@ -62,7 +63,6 @@ catch {
 
 # 2. Collect Connections
 
-
 foreach ($db in $dbList) {
     try {
         $mdb_id = $db.mdb_id
@@ -106,32 +106,9 @@ foreach ($db in $dbList) {
                 if ($connList.Count -gt 0) {
                     Write-GiipLog "INFO" "[DbConnectionList] Sending connection data for DB: $mdb_id"
                     
-                    # [Modern KVSPut Pattern per Linux Agent]
-                    # Text: Parameter names only
-                    # JsonData: Actual values { kType, kKey, kFactor, kValue }
+                    # Use Shared Library KVS.ps1
+                    $response = Invoke-GiipKvsPut -Config $Config -Type "database" -Key "$mdb_id" -Factor "db_connections" -Value $connList
                     
-                    $payload = @{
-                        kType   = "database"
-                        kKey    = "$mdb_id"
-                        kFactor = "db_connections"
-                        kValue  = $connList
-                    }
-                    
-                    $jsonPayload = $payload | ConvertTo-Json -Compress -Depth 5
-                    $cmdText = "KVSPut kType kKey kFactor"
-
-                    Write-GiipLog "INFO" "--- [DEBUG REQ] ---"
-                    Write-GiipLog "INFO" "CMD : $cmdText"
-                    Write-GiipLog "INFO" "JSON: $jsonPayload"
-                    Write-GiipLog "INFO" "-------------------"
-
-                    $response = Invoke-GiipApiV2 -Config $Config -CommandText $cmdText -JsonData $jsonPayload
-                    
-                    Write-GiipLog "INFO" "--- [DEBUG RES] ---"
-                    Write-GiipLog "INFO" "CreateType: $($response.GetType().Name)"
-                    Write-GiipLog "INFO" "Raw: $($response | ConvertTo-Json -Depth 2 -Compress)"
-                    Write-GiipLog "INFO" "-------------------"
-
                     if ($response.RstVal -eq "200") {
                         Write-GiipLog "INFO" "[DbConnectionList] Success for DB $mdb_id."
                     }
@@ -139,7 +116,8 @@ foreach ($db in $dbList) {
                         Write-GiipLog "WARN" "[DbConnectionList] API Error for DB $mdb_id"
                         Write-GiipLog "WARN" "RstVal: '$($response.RstVal)'"
                         Write-GiipLog "WARN" "RstMsg: '$($response.RstMsg)'"
-                        Write-GiipLog "WARN" "FullObj: $($response | ConvertTo-Json -Compress)"
+                        # Only log full object on debug or error
+                        # Write-GiipLog "DEBUG" "FullObj: $($response | ConvertTo-Json -Compress)"
                     }
                 }
             }
