@@ -91,11 +91,19 @@ if (Test-Path $dbMonitorScript) {
     & $dbMonitorScript
 }
 
-# 6. DB Connection Monitoring (Net3D)
+
+# 6. DB Connection Monitoring (Net3D) -> Rename/Keep logic
 $dbConnScript = Join-Path $ModuleDir "DbConnectionList.ps1"
 if (Test-Path $dbConnScript) {
     Write-GiipLog "INFO" "[Step 5] Running DB Connection List (Net3D)..."
     & $dbConnScript
+}
+
+# 7. Host Connection (Netstat) Monitoring (Net3D)
+$hostConnScript = Join-Path $ModuleDir "HostConnectionList.ps1"
+if (Test-Path $hostConnScript) {
+    Write-GiipLog "INFO" "[Step 6] Running Host Connection List (Net3D)..."
+    & $hostConnScript
 }
 
 Write-GiipLog "INFO" "=== giipAgent3.ps1 Completed ==="
