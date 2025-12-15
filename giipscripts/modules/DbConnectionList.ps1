@@ -80,15 +80,19 @@ foreach ($db in $dbList) {
                 $conn.Open()
                 
                 $cmdConn = $conn.CreateCommand()
-                # Query for Active Client IPs
+                # Query for Active Client IPs, Load, and Last SQL
                 $cmdConn.CommandText = @"
                     SELECT 
-                        client_net_address,
-                        program_name,
-                        COUNT(*) as conn_count
-                    FROM sys.dm_exec_sessions s
-                    JOIN sys.dm_exec_connections c ON s.session_id = c.session_id
-                    GROUP BY client_net_address, program_name
+                        c.client_net_address,
+                        MAX(s.program_name) as program_name,
+                        COUNT(*) as conn_count,
+                        ISNULL(SUM(r.cpu_time), 0) as cpu_load,
+                        MAX(SUBSTRING(t.text, 1, 200)) as last_sql  -- Limit SQL text length
+                    FROM sys.dm_exec_connections c
+                    JOIN sys.dm_exec_sessions s ON c.session_id = s.session_id
+                    LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id
+                    OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
+                    GROUP BY c.client_net_address
 "@
                 $readerConn = $cmdConn.ExecuteReader()
                 $connList = @()
@@ -98,6 +102,8 @@ foreach ($db in $dbList) {
                         client_net_address = $readerConn["client_net_address"]
                         program_name       = $readerConn["program_name"]
                         conn_count         = $readerConn["conn_count"]
+                        cpu_load           = $readerConn["cpu_load"]
+                        last_sql           = $readerConn["last_sql"]
                     }
                 }
                 $readerConn.Close()
