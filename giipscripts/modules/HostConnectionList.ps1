@@ -80,8 +80,9 @@ try {
         Write-GiipLog "INFO" "[HostConnectionList] Found $($report.Count) active connections."
         
         # Send to API (KVS)
-        # kType = 'server', kKey = LSSN, kFactor = 'netstat'
-        $response = Invoke-GiipKvsPut -Config $Config -Type "server" -Key "$($Config.lssn)" -Factor "netstat" -Value $report
+        # kType = 'lssn', kKey = LSSN, kFactor = 'netstat'
+        # NOTE: Backend expects 'lssn' for server-related data, 'server' will be rejected (404) by pApiKVSPutbySk
+        $response = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "netstat" -Value $report
 
         if ($response.RstVal -eq "200") {
             Write-GiipLog "INFO" "[HostConnectionList] Success. Uploaded netstat data."
