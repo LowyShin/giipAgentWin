@@ -128,3 +128,6 @@ debug = "0"
 2.  **JSON 형식**: JSON 페이로드에 `timestamp`를 포함하지 마십시오. 서버 측의 `GETUTCDATE()`를 신뢰합니다.
 3.  **인코딩**: `jsondata`가 올바르게 JSON 인코딩되었는지 확인하십시오 (따옴표 이스케이프 등).
 4.  **자동 업데이트**: `lssn`이 변경되면 (숫자 응답 수신 시), 물리적인 설정 파일을 즉시 업데이트해야 합니다.
+
+## 7. 관련 문서 (Related Documentation)
+*   **[데이터 수집 사양서](AGENT_DATA_SPEC.md)**: DB 성능 및 Netstat 등 수집 데이터의 표준 규격 정의.
