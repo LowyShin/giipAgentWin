@@ -78,7 +78,7 @@ try {
                     SELECT 
                         dp.name, 
                         dp.type_desc as type, 
-                        dp.state_desc as status, 
+                        'ENABLED' as status, 
                         (SELECT r.name + ',' FROM sys.database_role_members drm JOIN sys.database_principals r ON drm.role_principal_id = r.principal_id WHERE drm.member_principal_id = dp.principal_id FOR XML PATH('')) as roles 
                     FROM sys.database_principals dp 
                     WHERE dp.type IN ('S','U','G');
