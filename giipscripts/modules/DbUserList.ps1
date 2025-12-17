@@ -76,12 +76,13 @@ try {
                     $userCmd.CommandText = @"
                     SET NOCOUNT ON;
                     SELECT 
-                        dp.name, 
-                        dp.type_desc as type, 
-                        'ENABLED' as status, 
-                        (SELECT r.name + ',' FROM sys.database_role_members drm JOIN sys.database_principals r ON drm.role_principal_id = r.principal_id WHERE drm.member_principal_id = dp.principal_id FOR XML PATH('')) as roles 
-                    FROM sys.database_principals dp 
-                    WHERE dp.type IN ('S','U','G');
+                        sp.name, 
+                        sp.type_desc as type, 
+                        CASE WHEN sp.is_disabled = 1 THEN 'DISABLED' ELSE 'ENABLED' END as status, 
+                        STUFF((SELECT ',' + r.name FROM sys.server_role_members srm JOIN sys.server_principals r ON srm.role_principal_id = r.principal_id WHERE srm.member_principal_id = sp.principal_id FOR XML PATH('')), 1, 1, '') as roles 
+                    FROM sys.server_principals sp 
+                    WHERE sp.type IN ('S','U','G')
+                    AND sp.name NOT LIKE '##%';
 "@
                     $userReader = $userCmd.ExecuteReader()
                     $userList = @()
@@ -104,13 +105,31 @@ try {
                             user_list = $userList
                         } | ConvertTo-Json -Depth 5 -Compress
 
+                        # Handle API Response (SP might return direct JSON or wrapped JSON string)
                         $res = Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata" -JsonData $ulPayload
                         
-                        if ($res.RstVal -eq 200) {
+                        $rstVal = $res.RstVal
+                        $rstMsg = $res.RstMsg
+
+                        # Handle "data: [{JSON_...: '{...}'}]" format
+                        if (-not $rstVal -and $res.data) {
+                            try {
+                                # Extract first item's first property value (the JSON string)
+                                $innerJson = $res.data[0].PSObject.Properties | Select-Object -First 1 -ExpandProperty Value
+                                $innerObj = $innerJson | ConvertFrom-Json
+                                $rstVal = $innerObj.RstVal
+                                $rstMsg = $innerObj.RstMsg
+                            }
+                            catch {
+                                Write-GiipLog "WARN" "[DbUserList] Failed to parse inner JSON response"
+                            }
+                        }
+
+                        if ($rstVal -eq 200) {
                             Write-GiipLog "INFO" "[DbUserList] 📤 Data uploaded for $dbHost (Success)"
                         }
                         else {
-                            $msg = if ($res.RstMsg) { $res.RstMsg } else { "Unknown Error" }
+                            $msg = if ($rstMsg) { $rstMsg } else { "Unknown Error ($($res | ConvertTo-Json -Compress))" }
                             Write-GiipLog "ERROR" "[DbUserList] ❌ Upload failed for ${dbHost}: $msg"
                             Write-GiipLog "DEBUG" "Response: $($res | ConvertTo-Json -Compress)"
                         }
