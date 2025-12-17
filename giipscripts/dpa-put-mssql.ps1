@@ -64,8 +64,10 @@ if (-not $SqlConnectionString) {
 # SQL Server에서 세션/부하/쿼리 정보 수집
 try {
   Import-Module SqlServer -ErrorAction Stop
-} catch {
-  Write-Host "[ERROR] SqlServer 모듈 필요. Install-Module SqlServer -Scope CurrentUser 로 설치하세요."; exit 1 }
+}
+catch {
+  Write-Host "[ERROR] SqlServer 모듈 필요. Install-Module SqlServer -Scope CurrentUser 로 설치하세요."; exit 1 
+}
 
 # 호스트명
 $hostName = $env:COMPUTERNAME
@@ -73,40 +75,65 @@ $hostName = $env:COMPUTERNAME
 # 세션/부하/쿼리 정보 쿼리 (예시)
 
 $query = @"
+SET NOCOUNT ON;
 SELECT
+  ISNULL(s.client_net_address, '') AS client_net_address,
   s.host_name,
   s.login_name,
-  r.status,
-  r.cpu_time,
-  r.reads,
-  r.writes,
-  r.logical_reads,
-  r.start_time,
-  r.command,
-  t.text AS query_text
-FROM sys.dm_exec_requests r
-JOIN sys.dm_exec_sessions s ON r.session_id = s.session_id
-CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) t
-WHERE s.is_user_process = 1
+  s.program_name,
+  s.status,
+  ISNULL(r.cpu_time, 0) AS cpu_load,
+  ISNULL(REPLACE(REPLACE(t.text, CHAR(13), ' '), CHAR(10), ' '), '') AS last_sql,
+  
+  -- Transaction Info
+  CASE WHEN trans.session_id IS NOT NULL THEN 1 ELSE 0 END as is_open_tran,
+  ISNULL(DATEDIFF(MINUTE, trans.transaction_begin_time, GETDATE()), 0) as tran_duration,
+  ISNULL(trans.transaction_state_desc, '') as tran_state
+
+FROM sys.dm_exec_sessions s
+LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id
+OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
+LEFT JOIN (
+    SELECT
+        st.session_id,
+        t.transaction_begin_time,
+        CASE t.transaction_state
+            WHEN 0 THEN 'Not initialized'
+            WHEN 1 THEN 'Initialized'
+            WHEN 2 THEN 'Active'
+            WHEN 3 THEN 'Ended (Read-Only)'
+            WHEN 4 THEN 'Commit initiated'
+            WHEN 5 THEN 'Prepared'
+            WHEN 6 THEN 'Committed'
+            WHEN 7 THEN 'Rolling back'
+            WHEN 8 THEN 'Rolled back'
+        END AS transaction_state_desc
+    FROM sys.dm_tran_active_transactions t
+    INNER JOIN sys.dm_tran_session_transactions st ON t.transaction_id = st.transaction_id
+) trans ON s.session_id = trans.session_id
+WHERE
+    s.is_user_process = 1
+    AND (s.status = 'running' OR trans.session_id IS NOT NULL)
 "@
 
 $results = Invoke-Sqlcmd -ConnectionString $SqlConnectionString -Query $query
 
-# 집계: 호스트별 연결/부하/쿼리
-$grouped = $results | Group-Object host_name | ForEach-Object {
+# 집계: IP별 연결/부하/쿼리/트랜잭션
+$grouped = $results | Group-Object client_net_address | ForEach-Object {
   [PSCustomObject]@{
-    host_name = $_.Name
-    sessions = $_.Group.Count
-    queries  = $_.Group | Select-Object login_name, status, cpu_time, reads, writes, logical_reads, start_time, command, query_text
+    client_net_address = $_.Name
+    host_name          = if ($_.Group[0].host_name) { $_.Group[0].host_name } else { "" }
+    sessions           = $_.Group.Count
+    queries            = $_.Group | Select-Object client_net_address, login_name, status, cpu_load, last_sql, is_open_tran, tran_duration, tran_state
   }
 }
 
 # 전체 부하 요약
 $summary = [PSCustomObject]@{
-  collected_at = (Get-Date).ToString('s')
+  collected_at   = (Get-Date).ToString('s')
   collector_host = $hostName
-  sql_server = $KVSConfig['Endpoint']
-  hosts = $grouped
+  sql_server     = $KVSConfig['Endpoint']
+  hosts          = $grouped
 }
 
 $json = $summary | ConvertTo-Json -Depth 5 -Compress
@@ -129,10 +156,10 @@ if ($KVSConfig['Enabled'] -eq 'true') {
   
   # jsondata에 모든 값 포함
   $kvspJsonData = @{
-    kType = $KVSConfig['KType']
-    kKey = $KVSConfig['KKey']
+    kType   = $KVSConfig['KType']
+    kKey    = $KVSConfig['KKey']
     kFactor = $KFactor
-    kValue = $summary
+    kValue  = $summary
   } | ConvertTo-Json -Depth 8 -Compress
 
   $postParams = [ordered]@{
@@ -151,11 +178,13 @@ if ($KVSConfig['Enabled'] -eq 'true') {
   try {
     $resp = Invoke-RestMethod -Method Post -Uri $endpoint -Body $bodyStr -ContentType 'application/x-www-form-urlencoded'
     Write-Host "[INFO] KVS 업로드 결과: $resp"
-  } catch {
+  }
+  catch {
     Write-Host "[ERROR] KVS 업로드 실패: $($_.Exception.Message)"
     Write-Host "[ERROR] Full request body length: $($bodyStr.Length)"
   }
-} else {
+}
+else {
   Write-Host "[INFO] KVS 업로드 비활성화. 결과 JSON:"
   Write-Host $json
 }
