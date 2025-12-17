@@ -97,17 +97,23 @@ try {
                     $userConn.Close()
 
                     if ($userList.Count -gt 0) {
-                        $userJson = $userList | ConvertTo-Json -Compress
-                        
                         # Upload to Net3dUserListPut
                         $ulPayload = @{
                             mdb_id    = $mdb_id
                             lssn      = $Config.lssn
-                            user_list = $userJson
-                        } | ConvertTo-Json -Compress
+                            user_list = $userList
+                        } | ConvertTo-Json -Depth 5 -Compress
 
-                        Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata" -JsonData $ulPayload
-                        Write-GiipLog "INFO" "[DbUserList] 📤 Data uploaded for $dbHost"
+                        $res = Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata" -JsonData $ulPayload
+                        
+                        if ($res.RstVal -eq 200) {
+                            Write-GiipLog "INFO" "[DbUserList] 📤 Data uploaded for $dbHost (Success)"
+                        }
+                        else {
+                            $msg = if ($res.RstMsg) { $res.RstMsg } else { "Unknown Error" }
+                            Write-GiipLog "ERROR" "[DbUserList] ❌ Upload failed for ${dbHost}: $msg"
+                            Write-GiipLog "DEBUG" "Response: $($res | ConvertTo-Json -Compress)"
+                        }
                     }
                     else {
                         Write-GiipLog "WARN" "[DbUserList] No users found for $dbHost"
