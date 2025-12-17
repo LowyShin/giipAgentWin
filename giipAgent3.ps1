@@ -106,5 +106,12 @@ if (Test-Path $hostConnScript) {
     & $hostConnScript
 }
 
+# 8. DB User List Monitoring (Net3D)
+$dbUserListScript = Join-Path $ModuleDir "DbUserList.ps1"
+if (Test-Path $dbUserListScript) {
+    Write-GiipLog "INFO" "[Step 7] Checking DB User List Requests..."
+    & $dbUserListScript
+}
+
 Write-GiipLog "INFO" "=== giipAgent3.ps1 Completed ==="
 exit 0
