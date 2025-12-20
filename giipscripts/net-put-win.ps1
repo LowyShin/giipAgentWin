@@ -421,17 +421,21 @@ function Get-TcpConnectionsInfo {
     }
   } else {
     # 폴백: netstat -ano
+    $procMap = @{}
+    foreach ($p in Get-Process) { $procMap[$p.Id] = $p.ProcessName }
+    
     $raw = (netstat -ano) 2>$null | Out-String
     $cnt = 0
     foreach ($line in ($raw -split "`n")) {
       if ($line -match '^\s*(TCP|UDP)\s+(\S+):(\d+)\s+(\S+):(\d+)\s+([A-Z_]+)\s+(\d+)$') {
+        $pidVal = [int]$matches[7]
         $list += [pscustomobject]@{
           proto = $matches[1]
           laddr = $matches[2]; lport = [int]$matches[3]
           raddr = $matches[4]; rport = [int]$matches[5]
           state = $matches[6]
-          pid   = [int]$matches[7]
-          proc_name = $null
+          pid   = $pidVal
+          proc_name = $procMap[$pidVal]
         }
         $cnt++
         if ($cnt -ge $TopConnections) { break }
