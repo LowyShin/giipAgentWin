@@ -147,7 +147,36 @@ function Invoke-GiipApiV2 {
         Write-Host "JSON: $JsonData"
         Write-Host "---------------------------------------------" -ForegroundColor Cyan
 
-        $response = Invoke-RestMethod -Uri $Uri -Method Post -Body $Body -TimeoutSec 30
+        # ⚠️ FIX: UTF-8 인코딩 명시 (일본어/한국어/중국어 등 모든 문자 지원)
+        # PowerShell의 Invoke-RestMethod는 -ContentType에 charset을 명시해야 UTF-8 사용
+        # 명시하지 않으면 시스템 기본 인코딩 사용 (CP949, Shift-JIS 등) → "???" 발생
+        
+        # Invoke-WebRequest 사용 (Invoke-RestMethod보다 인코딩 제어가 명확함)
+        $bodyString = @()
+        foreach ($key in $Body.Keys) {
+            $encodedKey = [System.Uri]::EscapeDataString($key)
+            $encodedValue = [System.Uri]::EscapeDataString($Body[$key])
+            $bodyString += "$encodedKey=$encodedValue"
+        }
+        $bodyString = $bodyString -join '&'
+        
+        # UTF-8 바이트로 변환
+        $utf8Bytes = [System.Text.Encoding]::UTF8.GetBytes($bodyString)
+        
+        # UTF-8 명시한 헤더
+        $headers = @{
+            'Content-Type' = 'application/x-www-form-urlencoded; charset=utf-8'
+        }
+        
+        $webResponse = Invoke-WebRequest -Uri $Uri `
+            -Method Post `
+            -Headers $headers `
+            -Body $utf8Bytes `
+            -TimeoutSec 30 `
+            -UseBasicParsing
+        
+        # JSON 응답 파싱
+        $response = $webResponse.Content | ConvertFrom-Json
         return $response
     }
     catch {
