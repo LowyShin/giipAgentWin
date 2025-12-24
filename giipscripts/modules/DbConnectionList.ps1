@@ -19,6 +19,145 @@ catch {
     exit 1
 }
 
+# ============================================================================
+# Function: Get-MSSQLConnections
+# Purpose: Collect connection info from MSSQL database
+# Returns: Array of connection objects
+# ============================================================================
+function Get-MSSQLConnections {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DbHost,
+        
+        [Parameter(Mandatory = $true)]
+        [int]$Port,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$User,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$Pass
+    )
+    
+    $connStr = "Server=$DbHost,$Port;Database=master;User Id=$User;Password=$Pass;TrustServerCertificate=True;Connection Timeout=10;"
+    $conn = New-Object System.Data.SqlClient.SqlConnection($connStr)
+    $conn.Open()
+    
+    $connList = @()
+    
+    try {
+        # Try performance query first (requires VIEW SERVER PERFORMANCE STATE)
+        try {
+            $cmd = $conn.CreateCommand()
+            $cmd.CommandText = @"
+                SELECT 
+                    c.client_net_address,
+                    MAX(s.program_name) as program_name,
+                    COUNT(*) as conn_count,
+                    ISNULL(SUM(r.cpu_time), 0) as cpu_load,
+                    MAX(SUBSTRING(t.text, 1, 200)) as last_sql
+                FROM sys.dm_exec_connections c
+                JOIN sys.dm_exec_sessions s ON c.session_id = s.session_id
+                LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id
+                OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
+                GROUP BY c.client_net_address
+"@
+            $reader = $cmd.ExecuteReader()
+            
+            while ($reader.Read()) {
+                $connList += @{
+                    client_net_address = $reader["client_net_address"]
+                    program_name       = $reader["program_name"]
+                    conn_count         = $reader["conn_count"]
+                    cpu_load           = $reader["cpu_load"]
+                    last_sql           = $reader["last_sql"]
+                }
+            }
+            $reader.Close()
+        }
+        catch {
+            # Permission denied - use fallback query (basic info only)
+            if ($_.Exception.Message -like "*VIEW SERVER PERFORMANCE STATE*") {
+                Write-GiipLog "WARN" "[DbConnectionList] No VIEW SERVER PERFORMANCE STATE permission for $DbHost. Using basic query."
+                
+                # Fallback: Basic connection count only
+                $cmdFallback = $conn.CreateCommand()
+                $cmdFallback.CommandText = @"
+                    SELECT 
+                        'N/A' as client_net_address,
+                        'N/A' as program_name,
+                        COUNT(*) as conn_count,
+                        0 as cpu_load,
+                        'Permission denied' as last_sql
+                    FROM sys.dm_exec_sessions
+                    WHERE is_user_process = 1
+"@
+                $readerFallback = $cmdFallback.ExecuteReader()
+                
+                while ($readerFallback.Read()) {
+                    $connList += @{
+                        client_net_address = $readerFallback["client_net_address"]
+                        program_name       = $readerFallback["program_name"]
+                        conn_count         = $readerFallback["conn_count"]
+                        cpu_load           = $readerFallback["cpu_load"]
+                        last_sql           = $readerFallback["last_sql"]
+                    }
+                }
+                $readerFallback.Close()
+            }
+            else {
+                # Other error - rethrow
+                throw
+            }
+        }
+    }
+    finally {
+        $conn.Close()
+    }
+    
+    return $connList
+}
+
+# ============================================================================
+# Function: Send-ConnectionData
+# Purpose: Send connection data to API
+# ============================================================================
+function Send-ConnectionData {
+    param(
+        [Parameter(Mandatory = $true)]
+        $Config,
+        
+        [Parameter(Mandatory = $true)]
+        [int]$MdbId,
+        
+        [Parameter(Mandatory = $true)]
+        [array]$ConnList
+    )
+    
+    if ($ConnList.Count -eq 0) {
+        return $false
+    }
+    
+    Write-GiipLog "INFO" "[DbConnectionList] Sending connection data for DB: $MdbId"
+    
+    $response = Invoke-GiipKvsPut -Config $Config -Type "database" -Key "$MdbId" -Factor "db_connections" -Value $ConnList
+    
+    if ($response.RstVal -eq "200") {
+        Write-GiipLog "INFO" "[DbConnectionList] Success for DB $MdbId."
+        return $true
+    }
+    else {
+        Write-GiipLog "WARN" "[DbConnectionList] API Error for DB $MdbId"
+        Write-GiipLog "WARN" "RstVal: '$($response.RstVal)'"
+        Write-GiipLog "WARN" "RstMsg: '$($response.RstMsg)'"
+        return $false
+    }
+}
+
+# ============================================================================
+# Main Logic
+# ============================================================================
+
 # Load Config
 try {
     $Config = Get-GiipConfig
@@ -33,7 +172,6 @@ Write-GiipLog "INFO" "[DbConnectionList] Starting..."
 
 # 1. Get DB List from API
 try {
-    # Send LSSN to allow filtering by gateway_lssn on server side
     $reqData = @{ lssn = $Config.lssn }
     $reqJson = $reqData | ConvertTo-Json -Compress
     
@@ -61,79 +199,22 @@ catch {
     exit 1
 }
 
-# 2. Collect Connections
-
+# 2. Process Each Database
 foreach ($db in $dbList) {
     try {
-        $mdb_id = $db.mdb_id
-        $db_type = $db.db_type
-        $dbHost = $db.db_host
-        $port = $db.db_port
-        $user = $db.db_user
-        $pass = $db.db_password
-
-        # Only MSSQL supported for now
-        if ($db_type -eq 'MSSQL') {
-            try {
-                $connStr = "Server=$dbHost,$port;Database=master;User Id=$user;Password=$pass;TrustServerCertificate=True;Connection Timeout=10;"
-                $conn = New-Object System.Data.SqlClient.SqlConnection($connStr)
-                $conn.Open()
-                
-                $cmdConn = $conn.CreateCommand()
-                # Query for Active Client IPs, Load, and Last SQL
-                $cmdConn.CommandText = @"
-                    SELECT 
-                        c.client_net_address,
-                        MAX(s.program_name) as program_name,
-                        COUNT(*) as conn_count,
-                        ISNULL(SUM(r.cpu_time), 0) as cpu_load,
-                        MAX(SUBSTRING(t.text, 1, 200)) as last_sql  -- Limit SQL text length
-                    FROM sys.dm_exec_connections c
-                    JOIN sys.dm_exec_sessions s ON c.session_id = s.session_id
-                    LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id
-                    OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
-                    GROUP BY c.client_net_address
-"@
-                $readerConn = $cmdConn.ExecuteReader()
-                $connList = @()
-                
-                while ($readerConn.Read()) {
-                    $connList += @{
-                        client_net_address = $readerConn["client_net_address"]
-                        program_name       = $readerConn["program_name"]
-                        conn_count         = $readerConn["conn_count"]
-                        cpu_load           = $readerConn["cpu_load"]
-                        last_sql           = $readerConn["last_sql"]
-                    }
-                }
-                $readerConn.Close()
-                $conn.Close()
-
-                if ($connList.Count -gt 0) {
-                    Write-GiipLog "INFO" "[DbConnectionList] Sending connection data for DB: $mdb_id"
-                    
-                    # Use Shared Library KVS.ps1
-                    $response = Invoke-GiipKvsPut -Config $Config -Type "database" -Key "$mdb_id" -Factor "db_connections" -Value $connList
-                    
-                    if ($response.RstVal -eq "200") {
-                        Write-GiipLog "INFO" "[DbConnectionList] Success for DB $mdb_id."
-                    }
-                    else {
-                        Write-GiipLog "WARN" "[DbConnectionList] API Error for DB $mdb_id"
-                        Write-GiipLog "WARN" "RstVal: '$($response.RstVal)'"
-                        Write-GiipLog "WARN" "RstMsg: '$($response.RstMsg)'"
-                        # Only log full object on debug or error
-                        # Write-GiipLog "DEBUG" "FullObj: $($response | ConvertTo-Json -Compress)"
-                    }
-                }
-            }
-            catch {
-                Write-GiipLog "WARN" "[DbConnectionList] Failed for $($dbHost): $_"
-            }
+        # Skip non-MSSQL databases
+        if ($db.db_type -ne 'MSSQL') {
+            continue
         }
+        
+        # Collect connections
+        $connList = Get-MSSQLConnections -DbHost $db.db_host -Port $db.db_port -User $db.db_user -Pass $db.db_password
+        
+        # Send to API
+        Send-ConnectionData -Config $Config -MdbId $db.mdb_id -ConnList $connList
     }
     catch {
-        Write-GiipLog "ERROR" "[DbConnectionList] Unexpected error: $_"
+        Write-GiipLog "WARN" "[DbConnectionList] Failed for $($db.db_host): $_"
     }
 }
 
