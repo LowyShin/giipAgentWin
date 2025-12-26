@@ -70,8 +70,8 @@ The error cascades through the parse tree, causing multiple "Missing closing '}'
 | Line | Current | Replacement |
 |------|---------|-------------|
 | 67 | `👤 Processing Request` | `Processing Request` |
-| 129 | `📤 Data uploaded` | `✓ Data uploaded` or `Data uploaded successfully` |
-| 133 | `❌ Upload failed` | `✗ Upload failed` or `ERROR: Upload failed` |
+| 129 | `📤 Data uploaded` | `Data uploaded` |
+| 133 | `❌ Upload failed` | `Upload failed` |
 
 ### Alternative Solutions Considered
 
