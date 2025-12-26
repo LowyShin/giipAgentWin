@@ -64,7 +64,7 @@ try {
             $pass = $db.db_password
             $port = $db.db_port
 
-            Write-GiipLog "INFO" "[DbUserList] 👤 Processing Request for $dbHost ($mdb_id)..."
+            Write-GiipLog "INFO" "[DbUserList] Processing Request for $dbHost ($mdb_id)..."
 
             if ($db.db_type -eq 'MSSQL') {
                 try {
@@ -126,11 +126,11 @@ try {
                         }
 
                         if ($rstVal -eq 200) {
-                            Write-GiipLog "INFO" "[DbUserList] 📤 Data uploaded for $dbHost (Success)"
+                            Write-GiipLog "INFO" "[DbUserList] Data uploaded for $dbHost (Success)"
                         }
                         else {
                             $msg = if ($rstMsg) { $rstMsg } else { "Unknown Error ($($res | ConvertTo-Json -Compress))" }
-                            Write-GiipLog "ERROR" "[DbUserList] ❌ Upload failed for ${dbHost}: $msg"
+                            Write-GiipLog "ERROR" "[DbUserList] Upload failed for ${dbHost}: $msg"
                             Write-GiipLog "DEBUG" "Response: $($res | ConvertTo-Json -Compress)"
                         }
                     }
