@@ -29,7 +29,7 @@ function Main {
     $delay = if ($Config.giipagentdelay) { [int]$Config.giipagentdelay } else { 60 }
   }
   catch {
-    Write-GiipLog "ERROR" "Initialization Failed: $_"
+    Write-GiipLog "ERROR" "Initialization Failed: $($_.Exception.Message)"
     exit 1
   }
     
@@ -46,7 +46,7 @@ function Main {
             
     }
     catch {
-      Write-GiipLog "ERROR" "Loop Error: $_"
+      Write-GiipLog "ERROR" "Loop Error: $($_.Exception.Message)"
     }
         
     # Step C: Sleep
@@ -62,6 +62,6 @@ try {
   Main
 }
 catch {
-  Write-Host "Unhandled Exception: $_"
+  Write-Host "Unhandled Exception: $($_.Exception.Message)"
   exit 1
 }

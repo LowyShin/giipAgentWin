@@ -24,7 +24,7 @@ try {
     if (-not $Config) { throw "Config is empty" }
 }
 catch {
-    Write-GiipLog "ERROR" "[DbUserList] Failed to load config: $_"
+    Write-GiipLog "ERROR" "[DbUserList] Failed to load config: $($_.Exception.Message)"
     exit 1
 }
 
@@ -139,7 +139,7 @@ try {
                     }
                 }
                 catch {
-                    Write-GiipLog "ERROR" "[DbUserList] Failed to collect/upload for ${dbHost}: $_"
+                    Write-GiipLog "ERROR" "[DbUserList] Failed to collect/upload for ${dbHost}: $($_.Exception.Message)"
                 }
             }
             else {
@@ -154,7 +154,7 @@ try {
 
 }
 catch {
-    Write-GiipLog "ERROR" "[DbUserList] Error checking requests: $_"
+    Write-GiipLog "ERROR" "[DbUserList] Error checking requests: $($_.Exception.Message)"
     exit 1
 }
 
