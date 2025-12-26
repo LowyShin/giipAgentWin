@@ -43,7 +43,7 @@ foreach ($file in $allFiles) {
     }
     catch {
         Write-Host " ⚠️ WARNING" -ForegroundColor Yellow
-        Write-Host "  Could not parse file: $_" -ForegroundColor Yellow
+        Write-Host "  Could not parse file: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
