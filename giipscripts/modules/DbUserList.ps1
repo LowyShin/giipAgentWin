@@ -24,7 +24,7 @@ try {
     if (-not $Config) { throw "Config is empty" }
 }
 catch {
-    $errMsg = ($_.Exception.Message -replace '"', "'" -replace '`', '')
+    $errMsg = ($_.Exception.Message -replace '"', "'")
     Write-GiipLog 'ERROR' ('[DbUserList] Failed to load config: ' + $errMsg)
     exit 1
 }
@@ -151,7 +151,7 @@ try {
                     }
                 }
                 catch {
-                    $errMsg = ($_.Exception.Message -replace '"', "'" -replace '`', '')
+                    $errMsg = ($_.Exception.Message -replace '"', "'")
                     Write-GiipLog 'ERROR' ('[DbUserList] Failed to collect/upload for ' + $dbHost + ': ' + $errMsg)
                 }
             }
@@ -168,7 +168,7 @@ try {
 
 }
 catch {
-    $errMsg = ($_.Exception.Message -replace '"', "'" -replace '`', '')
+    $errMsg = ($_.Exception.Message -replace '"', "'")
     Write-GiipLog 'ERROR' ('[DbUserList] Error checking requests: ' + $errMsg)
     exit 1
 }
