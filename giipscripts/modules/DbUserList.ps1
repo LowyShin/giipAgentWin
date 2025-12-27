@@ -68,8 +68,16 @@ try {
 
             if ($db.db_type -eq 'MSSQL') {
                 try {
-                    $connStr = "Server=$dbHost,$port;Database=master;User Id=$user;Password=$pass;TrustServerCertificate=True;Connection Timeout=10;"
-                    $userConn = New-Object System.Data.SqlClient.SqlConnection($connStr)
+                    # Use SqlConnectionStringBuilder to safely handle special characters in password
+                    $connStrBuilder = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
+                    $connStrBuilder["Data Source"] = "$dbHost,$port"
+                    $connStrBuilder["Initial Catalog"] = "master"
+                    $connStrBuilder["User ID"] = $user
+                    $connStrBuilder["Password"] = $pass
+                    $connStrBuilder["TrustServerCertificate"] = $true
+                    $connStrBuilder["Connection Timeout"] = 10
+                    
+                    $userConn = New-Object System.Data.SqlClient.SqlConnection($connStrBuilder.ConnectionString)
                     $userConn.Open()
                     
                     $userCmd = $userConn.CreateCommand()
