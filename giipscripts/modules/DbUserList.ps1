@@ -24,8 +24,7 @@ try {
     if (-not $Config) { throw "Config is empty" }
 }
 catch {
-    $errMsg = ($_.Exception.Message -replace '"', "'")
-    Write-GiipLog 'ERROR' ('[DbUserList] Failed to load config: ' + $errMsg)
+    Write-GiipLog 'ERROR' ('[DbUserList] Failed to load config: ' + $_.Exception.Message)
     exit 1
 }
 
@@ -65,7 +64,7 @@ try {
             $pass = $db.db_password
             $port = $db.db_port
 
-            Write-GiipLog "INFO" "[DbUserList] 👤 Processing Request for $dbHost ($mdb_id)..."
+            Write-GiipLog "INFO" ("[DbUserList] Processing Request for {0} ({1})..." -f $dbHost, $mdb_id)
 
             if ($db.db_type -eq 'MSSQL') {
                 try {
@@ -135,11 +134,11 @@ try {
                         }
 
                         if ($rstVal -eq 200) {
-                            Write-GiipLog "INFO" "[DbUserList] 📤 Data uploaded for $dbHost (Success)"
+                            Write-GiipLog "INFO" ("[DbUserList] Data uploaded for {0} (Success)" -f $dbHost)
                         }
                         else {
                             $msg = if ($rstMsg) { $rstMsg } else { "Unknown Error" }
-                            Write-GiipLog "ERROR" ("[DbUserList] ❌ Upload failed for {0}: {1}" -f $dbHost, $msg)
+                            Write-GiipLog "ERROR" ("[DbUserList] Upload failed for {0}: {1}" -f $dbHost, $msg)
                             if ($res) {
                                 $resJson = $res | ConvertTo-Json -Compress
                                 Write-GiipLog "DEBUG" ("Response: {0}" -f $resJson)
@@ -147,12 +146,11 @@ try {
                         }
                     }
                     else {
-                        Write-GiipLog "WARN" "[DbUserList] No users found for $dbHost"
+                        Write-GiipLog "WARN" ("[DbUserList] No users found for {0}" -f $dbHost)
                     }
                 }
                 catch {
-                    $errMsg = ($_.Exception.Message -replace '"', "'")
-                    Write-GiipLog 'ERROR' ('[DbUserList] Failed to collect/upload for ' + $dbHost + ': ' + $errMsg)
+                    Write-GiipLog 'ERROR' ('[DbUserList] Failed to collect/upload for ' + $dbHost + ': ' + $_.Exception.Message)
                 }
             }
             else {
@@ -168,8 +166,7 @@ try {
 
 }
 catch {
-    $errMsg = ($_.Exception.Message -replace '"', "'")
-    Write-GiipLog 'ERROR' ('[DbUserList] Error checking requests: ' + $errMsg)
+    Write-GiipLog 'ERROR' ('[DbUserList] Error checking requests: ' + $_.Exception.Message)
     exit 1
 }
 
