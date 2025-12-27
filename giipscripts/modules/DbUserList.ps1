@@ -24,7 +24,8 @@ try {
     if (-not $Config) { throw "Config is empty" }
 }
 catch {
-    Write-GiipLog "ERROR" "[DbUserList] Failed to load config: $($_.Exception.Message)"
+    $errMsg = $_.Exception.Message
+    Write-GiipLog "ERROR" ("[DbUserList] Failed to load config: {0}" -f $errMsg)
     exit 1
 }
 
@@ -155,7 +156,8 @@ try {
                 }
             }
             else {
-                Write-GiipLog "WARN" "[DbUserList] DB Type $($db.db_type) not supported for User List yet."
+                $dbType = $db.db_type
+                Write-GiipLog "WARN" ("[DbUserList] DB Type {0} not supported for User List yet." -f $dbType)
             }
         }
     }
