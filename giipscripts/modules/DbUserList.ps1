@@ -137,9 +137,12 @@ try {
                             Write-GiipLog "INFO" "[DbUserList] 📤 Data uploaded for $dbHost (Success)"
                         }
                         else {
-                            $msg = if ($rstMsg) { $rstMsg } else { "Unknown Error ($($res | ConvertTo-Json -Compress))" }
-                            Write-GiipLog "ERROR" "[DbUserList] ❌ Upload failed for ${dbHost}: $msg"
-                            Write-GiipLog "DEBUG" "Response: $($res | ConvertTo-Json -Compress)"
+                            $msg = if ($rstMsg) { $rstMsg } else { "Unknown Error" }
+                            Write-GiipLog "ERROR" ("[DbUserList] ❌ Upload failed for {0}: {1}" -f $dbHost, $msg)
+                            if ($res) {
+                                $resJson = $res | ConvertTo-Json -Compress
+                                Write-GiipLog "DEBUG" ("Response: {0}" -f $resJson)
+                            }
                         }
                     }
                     else {
@@ -147,7 +150,8 @@ try {
                     }
                 }
                 catch {
-                    Write-GiipLog "ERROR" "[DbUserList] Failed to collect/upload for ${dbHost}: $($_.Exception.Message)"
+                    $errMsg = $_.Exception.Message
+                    Write-GiipLog "ERROR" ("[DbUserList] Failed to collect/upload for {0}: {1}" -f $dbHost, $errMsg)
                 }
             }
             else {
@@ -162,7 +166,8 @@ try {
 
 }
 catch {
-    Write-GiipLog "ERROR" "[DbUserList] Error checking requests: $($_.Exception.Message)"
+    $errMsg = $_.Exception.Message
+    Write-GiipLog "ERROR" ("[DbUserList] Error checking requests: {0}" -f $errMsg)
     exit 1
 }
 
