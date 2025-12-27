@@ -65,7 +65,7 @@ function Get-GiipConfig {
         if (Test-Path $path) {
             # Try to resolve to absolute path for clarity
             $fullPath = Resolve-Path $path
-            Write-GiipLog "INFO" ("Loading config from: {0}" -f $fullPath)
+            Write-GiipLog 'INFO' ('Loading config from: ' + $fullPath)
             return (Parse-ConfigFile -Path $path)
         }
     }
@@ -110,7 +110,7 @@ function Update-ConfigLssn {
         $content = Get-Content $targetFile
         $newContent = $content -replace 'lssn\s*=\s*"\d+"', "lssn = `"$NewLssn`"" -replace "lssn\s*=\s*'\d+'", "lssn = `"$NewLssn`""
         Set-Content -Path $targetFile -Value $newContent -Encoding UTF8
-        Write-GiipLog "INFO" ("Updated LSSN in config file to {0}" -f $NewLssn)
+        Write-GiipLog 'INFO' ('Updated LSSN in config file to ' + $NewLssn)
     }
 }
 #endregion
@@ -181,8 +181,8 @@ function Invoke-GiipApiV2 {
         return $response
     }
     catch {
-        $errMsg = $_.Exception.Message
-        Write-GiipLog "ERROR" ("API Call Failed ({0}): {1}" -f $CommandText, $errMsg)
+        $errMsg = ($_.Exception.Message -replace '"', "'" -replace '`', '')
+        Write-GiipLog 'ERROR' ('API Call Failed (' + $CommandText + '): ' + $errMsg)
         return $null
     }
 }

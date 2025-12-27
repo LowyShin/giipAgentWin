@@ -24,8 +24,8 @@ try {
     if (-not $Config) { throw "Config is empty" }
 }
 catch {
-    $errMsg = $_.Exception.Message
-    Write-GiipLog "ERROR" ("[DbUserList] Failed to load config: {0}" -f $errMsg)
+    $errMsg = ($_.Exception.Message -replace '"', "'" -replace '`', '')
+    Write-GiipLog 'ERROR' ('[DbUserList] Failed to load config: ' + $errMsg)
     exit 1
 }
 
@@ -151,13 +151,13 @@ try {
                     }
                 }
                 catch {
-                    $errMsg = $_.Exception.Message
-                    Write-GiipLog "ERROR" ("[DbUserList] Failed to collect/upload for {0}: {1}" -f $dbHost, $errMsg)
+                    $errMsg = ($_.Exception.Message -replace '"', "'" -replace '`', '')
+                    Write-GiipLog 'ERROR' ('[DbUserList] Failed to collect/upload for ' + $dbHost + ': ' + $errMsg)
                 }
             }
             else {
                 $dbType = $db.db_type
-                Write-GiipLog "WARN" ("[DbUserList] DB Type {0} not supported for User List yet." -f $dbType)
+                Write-GiipLog 'WARN' ('[DbUserList] DB Type ' + $dbType + ' not supported for User List yet.')
             }
         }
     }
@@ -168,8 +168,8 @@ try {
 
 }
 catch {
-    $errMsg = $_.Exception.Message
-    Write-GiipLog "ERROR" ("[DbUserList] Error checking requests: {0}" -f $errMsg)
+    $errMsg = ($_.Exception.Message -replace '"', "'" -replace '`', '')
+    Write-GiipLog 'ERROR' ('[DbUserList] Error checking requests: ' + $errMsg)
     exit 1
 }
 
