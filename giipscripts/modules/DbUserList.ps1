@@ -112,7 +112,7 @@ try {
                             mdb_id    = $mdb_id
                             lssn      = $Config.lssn
                             user_list = $userList
-                        } | ConvertTo-Json -Depth 5 -Compress | ForEach-Object { $_ -replace "'", "''" }
+                        } | ConvertTo-Json -Depth 5 -Compress
 
                         # Debug: Log payload before sending
                         Send-GiipDebugLog -Config $Config -Message "[DbUserList] Sending user_list for mdb_id=$mdb_id, host=$dbHost" -RequestData $ulPayload -Severity "debug"
