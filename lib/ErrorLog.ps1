@@ -96,9 +96,28 @@ function sendErrorLog {
             Write-GiipLog "ERROR" "ErrorLog API returned null response"
             return $null
         }
+
+        # [DEBUG] Response Type Check
+        # Write-GiipLog "DEBUG" "Response Type: $($response.GetType().FullName)"
         
+        # Validate response structure (Structural Fix for wrapped responses)
+        # Handle cases where data is wrapped in 'data' property (Array or Object)
+        if ($response.PSObject.Properties['data']) {
+            $responseData = $response.data
+            if ($responseData -is [Array] -and $responseData.Count -gt 0) {
+                $response = $responseData[0]
+            }
+            elseif ($responseData -isnot [Array] -and $responseData) {
+                $response = $responseData
+            }
+        }
+
         $rstVal = $response.RstVal
-        if ($rstVal -ne "200") {
+        
+        # [DEBUG] Check RstVal extraction
+        # Write-GiipLog "DEBUG" "Extracted RstVal: '$rstVal'"
+
+        if ($rstVal -ne "200" -and $rstVal -ne 200) {
             $rstMsg = if ($response.RstMsg) { $response.RstMsg } else { "Unknown error" }
             Write-GiipLog "ERROR" "ErrorLog API failed: $rstMsg (RstVal: $rstVal)"
             return $null
