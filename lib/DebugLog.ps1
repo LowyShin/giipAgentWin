@@ -60,14 +60,28 @@ function Send-GiipDebugLog {
         $logJson = $logData | ConvertTo-Json -Compress -Depth 5
         
         # Call ErrorLogCreate API
-        Invoke-GiipApiV2 -Config $Config -CommandText "ErrorLogCreate source errorMessage" -JsonData $logJson | Out-Null
+        $response = Invoke-GiipApiV2 -Config $Config -CommandText "ErrorLogCreate source errorMessage" -JsonData $logJson
+        
+        # Validate response
+        if (-not $response) {
+            throw "API returned null response"
+        }
+        
+        $rstVal = $response.RstVal
+        if ($rstVal -ne "200") {
+            $rstMsg = if ($response.RstMsg) { $response.RstMsg } else { "Unknown error" }
+            throw "API error: $rstMsg (RstVal: $rstVal)"
+        }
+        
+        # Return eSn if available
+        return $response.eSn
         
     }
     catch {
-        # Silently fail to avoid infinite logging loops
-        # Only write to local log if Write-GiipLog is available
+        # Re-throw for caller to handle
         if (Get-Command Write-GiipLog -ErrorAction SilentlyContinue) {
-            Write-GiipLog "WARN" "Failed to send central debug log: $($_.Exception.Message)"
+            Write-GiipLog "ERROR" "Failed to send debug log: $($_.Exception.Message)"
         }
+        throw
     }
 }

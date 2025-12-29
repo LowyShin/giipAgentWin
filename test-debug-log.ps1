@@ -86,8 +86,8 @@ catch {
 # Test 1: Simple debug log
 try {
     Write-Host "[3/4] Sending test debug log..." -ForegroundColor Yellow
-    Send-GiipDebugLog -Config $Config -Message "Test debug log from test script" -Severity "debug"
-    Write-Host "      ✓ Debug log sent successfully" -ForegroundColor Green
+    $eSn1 = Send-GiipDebugLog -Config $Config -Message "Test debug log from test script" -Severity "debug"
+    Write-Host "      ✓ Debug log sent successfully (eSn: $eSn1)" -ForegroundColor Green
 }
 catch {
     Write-Host "      ✗ Failed to send debug log: $_" -ForegroundColor Red
@@ -104,8 +104,8 @@ try {
         timestamp  = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
     } | ConvertTo-Json -Compress
     
-    Send-GiipDebugLog -Config $Config -Message "Test log with payload (including special char ')" -RequestData $testPayload -Severity "debug"
-    Write-Host "      ✓ Debug log with payload sent successfully" -ForegroundColor Green
+    $eSn2 = Send-GiipDebugLog -Config $Config -Message "Test log with payload (including special char ')" -RequestData $testPayload -Severity "debug"
+    Write-Host "      ✓ Debug log with payload sent successfully (eSn: $eSn2)" -ForegroundColor Green
 }
 catch {
     Write-Host "      ✗ Failed to send debug log with payload: $_" -ForegroundColor Red
@@ -116,7 +116,6 @@ Write-Host ""
 Write-Host "=== All Tests Passed ===" -ForegroundColor Green
 Write-Host ""
 Write-Host "📝 Verification Steps:" -ForegroundColor Cyan
-Write-Host "   1. Run: pwsh .\giipdb\scripts\errorlogproc\query-errorlogs.ps1" -ForegroundColor Gray
-Write-Host "   2. Look for logs with source='giipAgent-Debug'" -ForegroundColor Gray
-Write-Host "   3. Check that requestData field contains the test payload" -ForegroundColor Gray
+Write-Host "   pwsh .\giipdb\scripts\errorlogproc\query-errorlog-detail.ps1 -ErrorId $eSn1" -ForegroundColor Yellow
+Write-Host "   pwsh .\giipdb\scripts\errorlogproc\query-errorlog-detail.ps1 -ErrorId $eSn2" -ForegroundColor Yellow
 Write-Host ""
