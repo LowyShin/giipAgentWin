@@ -12,9 +12,10 @@ $LibDir = Join-Path $AgentRoot "lib"
 # Load Libraries
 try {
     . (Join-Path $LibDir "Common.ps1")
+    . (Join-Path $LibDir "DebugLog.ps1")
 }
 catch {
-    Write-Host "FATAL: Failed to load Common.ps1 from $LibDir"
+    Write-Host "FATAL: Failed to load libraries from $LibDir"
     exit 1
 }
 
@@ -111,7 +112,10 @@ try {
                             mdb_id    = $mdb_id
                             lssn      = $Config.lssn
                             user_list = $userList
-                        } | ConvertTo-Json -Depth 5 -Compress
+                        } | ConvertTo-Json -Depth 5 -Compress | ForEach-Object { $_ -replace "'", "''" }
+
+                        # Debug: Log payload before sending
+                        Send-GiipDebugLog -Config $Config -Message "[DbUserList] Sending user_list for mdb_id=$mdb_id, host=$dbHost" -RequestData $ulPayload -Severity "debug"
 
                         # Handle API Response (SP might return direct JSON or wrapped JSON string)
                         $res = Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata" -JsonData $ulPayload
@@ -139,6 +143,28 @@ try {
                         else {
                             $msg = if ($rstMsg) { $rstMsg } else { "Unknown Error" }
                             Write-GiipLog "ERROR" ("[DbUserList] Upload failed for {0}: {1}" -f $dbHost, $msg)
+                            
+                            # Log to Central DB (ErrorLogCreate)
+                            try {
+                                $errJson = @{
+                                    source       = "giipAgent"
+                                    errorMessage = "[DbUserList] Upload failed: $msg"
+                                    apiEndpoint  = "Net3dUserListPut"
+                                    requestData  = $ulPayload
+                                    lssn         = $Config.lssn
+                                    severity     = "error"
+                                } | ConvertTo-Json -Compress -Depth 5
+                                
+                                Invoke-GiipApiV2 -Config $Config -CommandText "ErrorLogCreate source errorMessage" -JsonData $errJson | Out-Null
+                                Write-GiipLog "INFO" "[DbUserList] Sent error report to central DB."
+                            }
+                            catch {
+                                Write-GiipLog "WARN" "[DbUserList] Failed to send error report: $($_.Exception.Message)"
+                            }
+
+                            # Log the payload locally for debugging
+                            Write-GiipLog "ERROR" ("Failed Payload: {0}" -f $ulPayload)
+
                             if ($res) {
                                 $resJson = $res | ConvertTo-Json -Compress
                                 Write-GiipLog "DEBUG" ("Response: {0}" -f $resJson)
