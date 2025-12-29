@@ -62,6 +62,10 @@ function Send-GiipDebugLog {
         # Call ErrorLogCreate API
         $response = Invoke-GiipApiV2 -Config $Config -CommandText "ErrorLogCreate source errorMessage" -JsonData $logJson
         
+        # Debug: Show full response
+        Write-Host "[DEBUG] Full API Response:" -ForegroundColor Magenta
+        Write-Host ($response | ConvertTo-Json -Depth 3) -ForegroundColor Gray
+        
         # Validate response
         if (-not $response) {
             throw "API returned null response"
