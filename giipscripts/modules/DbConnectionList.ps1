@@ -55,7 +55,7 @@ function Get-MSSQLConnections {
                     MAX(s.program_name) as program_name,
                     COUNT(*) as conn_count,
                     ISNULL(SUM(r.cpu_time), 0) as cpu_load,
-                    MAX(SUBSTRING(t.text, 1, 200)) as last_sql
+                    MAX(REPLACE(REPLACE(SUBSTRING(t.text, 1, 200), CHAR(13), ' '), CHAR(10), ' ')) as last_sql
                 FROM sys.dm_exec_connections c
                 JOIN sys.dm_exec_sessions s ON c.session_id = s.session_id
                 LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id
