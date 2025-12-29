@@ -28,44 +28,57 @@ catch {
     exit 1
 }
 
-# Load config (with auto-search fallback)
+# Load config (with auto-search fallback and template copy)
 Write-Host "[2/4] Loading configuration..." -ForegroundColor Yellow
 $Config = $null
+
+# Try default paths first
 try {
     $Config = Get-GiipConfig
     Write-Host "      ✓ Config loaded (lssn: $($Config.lssn))" -ForegroundColor Green
 }
 catch {
-    # Fallback: Search parent directories
-    Write-Host "      ⚠ Config not found in default paths. Searching parent directories..." -ForegroundColor Yellow
+    # Fallback 1: Search parent directories
+    Write-Host "      ⚠ Config not found. Searching parent directories..." -ForegroundColor Yellow
     $searchDir = $ScriptDir
     $found = $false
+    
     while ($searchDir) {
         $cfgPath = Join-Path $searchDir "giipAgent.cfg"
         if (Test-Path $cfgPath) {
-            Write-Host "      ✓ Found config at: $cfgPath" -ForegroundColor Green
+            Write-Host "      ✓ Found at: $cfgPath" -ForegroundColor Green
             $Global:BaseDir = $searchDir
             $Config = Parse-ConfigFile -Path $cfgPath
             $found = $true
             break
         }
         $parent = Split-Path $searchDir -Parent
-        if ($parent -eq $searchDir) { break }  # Reached root
+        if ($parent -eq $searchDir) { break }
         $searchDir = $parent
     }
     
+    # Fallback 2: Offer to copy template
     if (-not $found) {
-        Write-Host "      ✗ Config file not found in any parent directory" -ForegroundColor Red
+        Write-Host "      ✗ Config not found anywhere" -ForegroundColor Red
+        
+        $templatePath = Join-Path $ScriptDir "giipAgent.cfg"
+        $targetPath = Join-Path (Split-Path $ScriptDir -Parent) "giipAgent.cfg"
+        
         Write-Host ""
-        Write-Host "� Create giipAgent.cfg in one of these locations:" -ForegroundColor Cyan
-        Write-Host "   - $(Join-Path $ScriptDir '..\giipAgent.cfg')" -ForegroundColor Gray
-        Write-Host "   - $(Join-Path $env:USERPROFILE 'giipAgent.cfg')" -ForegroundColor Gray
+        Write-Host "💡 Template found: $templatePath" -ForegroundColor Cyan
+        Write-Host "📋 Suggestion: Copy template to parent directory:" -ForegroundColor Yellow
+        Write-Host "   Copy-Item '$templatePath' '$targetPath'" -ForegroundColor Gray
         Write-Host ""
-        Write-Host "� Required content:" -ForegroundColor Yellow
-        Write-Host '   sk = "your-security-key"' -ForegroundColor Gray
-        Write-Host '   lssn = "12345"' -ForegroundColor Gray
-        Write-Host '   apiaddrv2 = "https://giipfaw.azurewebsites.net/api/giipApiSk2"' -ForegroundColor Gray
+        Write-Host "   Then edit the file and set your actual values:" -ForegroundColor Yellow
+        Write-Host "   - sk = ""your-actual-token""" -ForegroundColor Gray
+        Write-Host "   - lssn = ""your-actual-lssn""" -ForegroundColor Gray
         Write-Host ""
+        
+        # Auto-copy for testing (commented out for safety)
+        # Uncomment below to auto-create config with template values
+        # Copy-Item $templatePath $targetPath -Force
+        # Write-Host "   ✓ Template copied! Please edit $targetPath" -ForegroundColor Green
+        
         exit 1
     }
 }
