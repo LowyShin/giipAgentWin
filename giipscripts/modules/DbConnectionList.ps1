@@ -13,6 +13,7 @@ $LibDir = Join-Path $AgentRoot "lib"
 try {
     . (Join-Path $LibDir "Common.ps1")
     . (Join-Path $LibDir "KVS.ps1")
+    . (Join-Path $LibDir "ErrorLog.ps1")
 }
 catch {
     Write-Host "FATAL: Failed to load libraries from $LibDir"
@@ -146,6 +147,23 @@ function Send-ConnectionData {
     if ($null -eq $response) {
         Write-GiipLog "ERROR" "[DbConnectionList] ❌ API returned NULL for DB $MdbId"
         Write-Host "[DbConnectionList] Response is NULL!" -ForegroundColor Red
+        
+        # 에러로그 DB에 기록
+        try {
+            sendErrorLog -Config $Config `
+                -Message "[DbConnectionList] API returned NULL response for DB $MdbId" `
+                -Data @{
+                mdbId         = $MdbId
+                api           = "KVSPut"
+                connListCount = $ConnList.Count
+            } `
+                -Severity "error" `
+                -ErrorType "ApiNullResponse"
+        }
+        catch {
+            Write-GiipLog "WARN" "[DbConnectionList] Failed to log error: $_"
+        }
+        
         return $false
     }
     
@@ -156,6 +174,28 @@ function Send-ConnectionData {
         Write-Host "[DbConnectionList] Response Properties: $($props -join ', ')" -ForegroundColor Cyan
         Write-Host "[DbConnectionList] RstVal: '$($response.RstVal)'" -ForegroundColor Cyan
         Write-Host "[DbConnectionList] RstMsg: '$($response.RstMsg)'" -ForegroundColor Cyan
+        
+        # RstVal이 비어있거나 NULL인 경우 에러로그에 기록 (구조 불일치)
+        if ([string]::IsNullOrWhiteSpace($response.RstVal)) {
+            Write-GiipLog "ERROR" "[DbConnectionList] ⚠️ Response structure mismatch: RstVal is empty"
+            
+            try {
+                sendErrorLog -Config $Config `
+                    -Message "[DbConnectionList] API response structure mismatch - RstVal is empty" `
+                    -Data @{
+                    mdbId              = $MdbId
+                    api                = "KVSPut"
+                    responseType       = $response.GetType().Name
+                    responseProperties = ($props -join ", ")
+                    note               = "This indicates giipApiSk2 wrapped response in {data:[]} structure"
+                } `
+                    -Severity "warn" `
+                    -ErrorType "ResponseStructureMismatch"
+            }
+            catch {
+                Write-GiipLog "WARN" "[DbConnectionList] Failed to log structure mismatch:  $_"
+            }
+        }
     }
     elseif ($response -is [Hashtable]) {
         Write-Host "[DbConnectionList] Response Keys: $($response.Keys -join ', ')" -ForegroundColor Cyan
