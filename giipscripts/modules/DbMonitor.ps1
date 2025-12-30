@@ -32,6 +32,25 @@ catch {
 
 Write-GiipLog "INFO" "[DbMonitor] Starting DB Monitoring..."
 
+# ========== DEBUG: DbMonitor 시작을 에러로그에 기록 ==========
+try {
+    $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
+    if (Test-Path $errorLogPath) {
+        . $errorLogPath
+        sendErrorLog -Config $Config `
+            -Message "[DbMonitor] Starting DB monitoring process" `
+            -Data @{
+            step      = "DbMonitor_Start"
+            timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        } `
+            -Severity "info" `
+            -ErrorType "DbMonitor_Debug"
+    }
+}
+catch {
+    Write-GiipLog "WARN" "[DbMonitor] Failed to log debug info: $_"
+}
+
 # 1. Get DB List from API
 try {
     # Command: MdbList (No args needed, SK is sent automatically by Invoke-GiipApiV2)
@@ -82,6 +101,28 @@ try {
 
     if (-not $dbList) {
         Write-GiipLog "INFO" "[DbMonitor] No databases found to monitor (dbList is empty)."
+        
+        # ========== DEBUG: DB 리스트 없음을 에러로그에 기록 ==========
+        try {
+            $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
+            if (Test-Path $errorLogPath) {
+                . $errorLogPath
+                sendErrorLog -Config $Config `
+                    -Message "[DbMonitor] No databases found in DB list" `
+                    -Data @{
+                    step         = "DbMonitor_GetList"
+                    responseType = $response.GetType().Name
+                    hasData      = if ($response.data) { "yes" } else { "no" }
+                    isArray      = if ($response -is [Array]) { "yes" } else { "no" }
+                } `
+                    -Severity "warn" `
+                    -ErrorType "DbMonitor_Debug"
+            }
+        }
+        catch {
+            Write-GiipLog "WARN" "[DbMonitor] Failed to log debug info: $_"
+        }
+        
         exit 0
     }
 
@@ -95,6 +136,34 @@ try {
     # ========== CRITICAL DEBUG: Log DB list details ==========
     foreach ($db in $dbList) {
         Write-GiipLog "DEBUG" "[DbMonitor] Will monitor: DB ID=$($db.mdb_id), Name=$($db.db_name), Host=$($db.db_host), Type=$($db.db_type)"
+    }
+    
+    # ========== DEBUG: DB 리스트를 에러로그에 기록 ==========
+    try {
+        $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
+        if (Test-Path $errorLogPath) {
+            . $errorLogPath
+            $dbListInfo = $dbList | ForEach-Object {
+                @{
+                    mdb_id  = $_.mdb_id
+                    db_name = $_.db_name
+                    db_host = $_.db_host
+                    db_type = $_.db_type
+                }
+            }
+            sendErrorLog -Config $Config `
+                -Message "[DbMonitor] Retrieved DB list for monitoring" `
+                -Data @{
+                step      = "DbMonitor_GetList"
+                dbCount   = $dbList.Count
+                databases = $dbListInfo
+            } `
+                -Severity "info" `
+                -ErrorType "DbMonitor_Debug"
+        }
+    }
+    catch {
+        Write-GiipLog "WARN" "[DbMonitor] Failed to log debug info: $_"
     }
 
 }
@@ -244,6 +313,26 @@ foreach ($db in $dbList) {
 
 # 3. Send Stats
 if ($statsList.Count -gt 0) {
+    # ========== DEBUG: 메트릭 수집 성공을 에러로그에 기록 ==========
+    try {
+        $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
+        if (Test-Path $errorLogPath) {
+            . $errorLogPath
+            sendErrorLog -Config $Config `
+                -Message "[DbMonitor] Metrics collected successfully, preparing to send" `
+                -Data @{
+                step         = "DbMonitor_MetricsCollected"
+                metricsCount = $statsList.Count
+                databases    = ($statsList | ForEach-Object { $_.mdb_id }) -join ","
+            } `
+                -Severity "info" `
+                -ErrorType "DbMonitor_Debug"
+        }
+    }
+    catch {
+        Write-GiipLog "WARN" "[DbMonitor] Failed to log debug info: $_"
+    }
+    
     try {
         $jsonPayload = $statsList | ConvertTo-Json -Compress
         Write-GiipLog "INFO" "[DbMonitor] Sending stats for $($statsList.Count) databases..."
