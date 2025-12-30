@@ -57,8 +57,15 @@ function Get-GiipConfig {
     
     $candidates = @()
     if ($Global:BaseDir) {
+        $candidates += (Join-Path $Global:BaseDir "giipAgent.cfg")
         $candidates += (Join-Path $Global:BaseDir "../giipAgent.cfg")
     }
+    # Current Directory of script
+    if ($PSScriptRoot) {
+        $candidates += (Join-Path $PSScriptRoot "giipAgent.cfg")
+        $candidates += (Join-Path $PSScriptRoot "../giipAgent.cfg")
+    }
+    $candidates += (Join-Path (Get-Location) "giipAgent.cfg")
     $candidates += (Join-Path $env:USERPROFILE "giipAgent.cfg")
 
     foreach ($path in $candidates) {

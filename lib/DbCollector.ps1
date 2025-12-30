@@ -79,10 +79,10 @@ function Get-GiipDbMetrics {
                     } | ConvertTo-Json -Compress
                     
                     sendErrorLog -Config $Config `
-                        -Message "[DbCollector] MSSQL connection failed" `
+                        -Message "[DbCollector] MSSQL Error for DB ${mdb_id}: $($_.Exception.Message)" `
                         -Data $errData `
                         -Severity "warn" `
-                        -ErrorType "DbConnectionFailed"
+                        -ErrorType "DbCollectionError"
                 }
             }
             catch {}
