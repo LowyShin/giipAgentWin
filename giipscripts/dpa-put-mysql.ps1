@@ -22,6 +22,8 @@ param(
 )
 
 # KVSConfig 및 SqlConnectionString 로드 (giipAgent.cfg)
+# ⚠️⚠️⚠️ DO NOT MODIFY THIS PATH ⚠️⚠️⚠️
+# DO NOT change to: ../giipAgent.cfg or ./giipAgent.cfg
 $KVSConfig = @{}
 $cfgPath = Join-Path $PSScriptRoot '..\..\giipAgent.cfg'
 if (Test-Path -LiteralPath $cfgPath) {
@@ -71,8 +73,10 @@ WHERE t.PROCESSLIST_USER IS NOT NULL
 # MySQL 연결 및 쿼리 실행 (MySql.Data 사용)
 try {
   Add-Type -Path "C:\Program Files\MySQL\MySQL Connector Net 8.0.33\Assemblies\v4\MySql.Data.dll"
-} catch {
-  Write-Host "[ERROR] MySql.Data.dll 로드 실패. MySQL Connector/NET 설치 필요."; exit 1 }
+}
+catch {
+  Write-Host "[ERROR] MySql.Data.dll 로드 실패. MySQL Connector/NET 설치 필요."; exit 1 
+}
 
 $conn = New-Object MySql.Data.MySqlClient.MySqlConnection($SqlConnectionString)
 try {
@@ -83,34 +87,36 @@ try {
   $results = @()
   while ($reader.Read()) {
     $results += [PSCustomObject]@{
-      host_name   = $reader["host_name"]
-      login_name  = $reader["login_name"]
-      command     = $reader["command"]
-      cpu_time    = $reader["cpu_time"]
-      status      = $reader["status"]
-      query_text  = $reader["query_text"]
+      host_name  = $reader["host_name"]
+      login_name = $reader["login_name"]
+      command    = $reader["command"]
+      cpu_time   = $reader["cpu_time"]
+      status     = $reader["status"]
+      query_text = $reader["query_text"]
     }
   }
   $reader.Close()
   $conn.Close()
-} catch {
-  Write-Host "[ERROR] MySQL 쿼리 실행 실패: $($_.Exception.Message)"; exit 2 }
+}
+catch {
+  Write-Host "[ERROR] MySQL 쿼리 실행 실패: $($_.Exception.Message)"; exit 2 
+}
 
 # 집계: 호스트별 연결/부하/쿼리
 $grouped = $results | Group-Object host_name | ForEach-Object {
   [PSCustomObject]@{
     host_name = $_.Name
-    sessions = $_.Group.Count
-    queries  = $_.Group | Select-Object login_name, status, cpu_time, reads, writes, logical_reads, start_time, command, query_text
+    sessions  = $_.Group.Count
+    queries   = $_.Group | Select-Object login_name, status, cpu_time, reads, writes, logical_reads, start_time, command, query_text
   }
 }
 
 # 전체 부하 요약
 $summary = [PSCustomObject]@{
-  collected_at = (Get-Date).ToString('s')
+  collected_at   = (Get-Date).ToString('s')
   collector_host = $hostName
-  sql_server = $KVSConfig['Endpoint']
-  hosts = $grouped
+  sql_server     = $KVSConfig['Endpoint']
+  hosts          = $grouped
 }
 
 $json = $summary | ConvertTo-Json -Depth 5 -Compress
@@ -148,11 +154,13 @@ if ($KVSConfig['Enabled'] -eq 'true') {
   try {
     $resp = Invoke-RestMethod -Method Post -Uri $endpoint -Body $bodyStr -ContentType 'application/x-www-form-urlencoded'
     Write-Host "[INFO] KVS 업로드 결과: $resp"
-  } catch {
+  }
+  catch {
     Write-Host "[ERROR] KVS 업로드 실패: $($_.Exception.Message)"
     Write-Host "[ERROR] Full request body length: $($bodyStr.Length)"
   }
-} else {
+}
+else {
   Write-Host "[INFO] KVS 업로드 비활성화. 결과 JSON:"
   Write-Host $json
 }

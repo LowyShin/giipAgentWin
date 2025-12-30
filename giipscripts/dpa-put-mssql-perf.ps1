@@ -18,6 +18,11 @@ param(
 )
 
 # 기본 설정 로드 (giipAgent.cfg)
+# ⚠️⚠️⚠️ DO NOT MODIFY THIS PATH ⚠️⚠️⚠️
+# Path: ../..giipAgent.cfg (PARENT of repository root)
+# DO NOT change to: ../giipAgent.cfg or ./giipAgent.cfg
+# WHY? giipAgentWin/giipAgent.cfg is a SAMPLE with 'YOUR_LSSN'!
+$AgentRoot = Join-Path $PSScriptRoot '..\..'  # giipAgentWin의 상위 디렉토리
 $KVSConfig = @{}
 $cfgPath = Join-Path $PSScriptRoot '..\..\giipAgent.cfg'
 if (Test-Path -LiteralPath $cfgPath) {

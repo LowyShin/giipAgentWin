@@ -22,6 +22,10 @@ param(
 )
 
 # KVSConfig 및 SqlConnectionString 로드 (giipAgent.cfg)
+# ⚠️⚠️⚠️ DO NOT MODIFY THIS PATH ⚠️⚠️⚠️
+# Path: ../..giipAgent.cfg (PARENT of repository root)
+# DO NOT change to: ../giipAgent.cfg or ./giipAgent.cfg
+# WHY? giipAgentWin/giipAgent.cfg is a SAMPLE with 'YOUR_LSSN'!
 $KVSConfig = @{}
 $cfgPath = Join-Path $PSScriptRoot '..\..\giipAgent.cfg'
 if (Test-Path -LiteralPath $cfgPath) {

@@ -4,6 +4,8 @@
 
 # Load configuration
 $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
+# ⚠️⚠️⚠️ DO NOT MODIFY THIS PATH ⚠️⚠️⚠️
+# giipAgent.cfg must be in ScriptDir (giipAgentWin), not parent!
 $ConfigFile = Join-Path $ScriptDir "giipAgent.cfg"
 
 if (-not (Test-Path $ConfigFile)) {
@@ -82,12 +84,12 @@ try {
     Write-AgentLog "Sending data to API: $ApiUrl"
 
     $RequestBody = @{
-        at = $sk
+        at       = $sk
         jsondata = $DiscoveryObj
     } | ConvertTo-Json -Depth 10
 
     $Headers = @{
-        "Content-Type" = "application/json"
+        "Content-Type"  = "application/json"
         "Authorization" = "Bearer $sk"
     }
 
@@ -109,7 +111,8 @@ try {
             Write-AgentLog "Updated giipAgent.cfg with LSSN: $NewLssn"
         }
 
-    } catch {
+    }
+    catch {
         Write-AgentLog "ERROR: API call failed - $($_.Exception.Message)"
         Write-AgentLog "Response: $($_.Exception.Response)"
         exit 1
@@ -122,7 +125,8 @@ try {
 
     Write-AgentLog "Auto-discovery completed successfully"
 
-} catch {
+}
+catch {
     Write-AgentLog "ERROR: $_"
     Write-AgentLog "Stack trace: $($_.ScriptStackTrace)"
     exit 1

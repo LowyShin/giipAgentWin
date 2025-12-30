@@ -51,22 +51,41 @@ function Write-GiipLog {
 #endregion
 
 #region ====== Configuration ======
+
+# ============================================================================
+# ⚠️⚠️⚠️ CRITICAL WARNING - DO NOT MODIFY THIS FUNCTION ⚠️⚠️⚠️
+# ============================================================================
+# This function searches for giipAgent.cfg in SPECIFIC LOCATIONS ONLY.
+# 
+# ❌ NEVER ADD: Join-Path $BaseDir "giipAgent.cfg"
+# ❌ NEVER ADD: Join-Path $PSScriptRoot "giipAgent.cfg"
+# ❌ NEVER CHANGE the search order without user approval!
+#
+# WHY? giipAgentWin/giipAgent.cfg is a SAMPLE file with placeholder values:
+#   - lssn = "YOUR_LSSN"  ← This causes varchar→int conversion errors!
+#   - sk = "YOUR_KVS_TOKEN"  ← This is not a real token!
+#
+# REAL config location: Parent directory or %USERPROFILE%
+# ============================================================================
 function Get-GiipConfig {
-    # Priority: 1. Parent Dir (../giipAgent.cfg) represented by $Global:BaseDir/../
+    # Priority: 1. Parent Dir (../giipAgent.cfg) - Real Config
     #           2. User Profile
+    #           3. Current Directory (fallback)
+    # ⚠️ IMPORTANT: Do NOT search in $BaseDir itself - that's where the SAMPLE file is!
     
     $candidates = @()
     if ($Global:BaseDir) {
-        $candidates += (Join-Path $Global:BaseDir "giipAgent.cfg")
+        # ✅ Search PARENT directory first (real config location)
         $candidates += (Join-Path $Global:BaseDir "../giipAgent.cfg")
     }
-    # Current Directory of script
+    # Current Directory of script (parent of lib/)
     if ($PSScriptRoot) {
-        $candidates += (Join-Path $PSScriptRoot "giipAgent.cfg")
         $candidates += (Join-Path $PSScriptRoot "../giipAgent.cfg")
     }
-    $candidates += (Join-Path (Get-Location) "giipAgent.cfg")
+    # User Profile
     $candidates += (Join-Path $env:USERPROFILE "giipAgent.cfg")
+    # Current working directory (fallback)
+    $candidates += (Join-Path (Get-Location) "giipAgent.cfg")
 
     foreach ($path in $candidates) {
         if (Test-Path $path) {

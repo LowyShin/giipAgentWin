@@ -80,7 +80,8 @@ param(
 
 # @@ANCHOR:USER_CONFIG_START
 # region 사용자 설정: giipAgent.cfg에서 KVSConfig 읽기, kFactor만 이 파일에서 지정
-$KVSConfig = @{}
+# ⚠️⚠️⚠️ DO NOT MODIFY THIS PATH ⚠️⚠️⚠️
+$kFactor = 'netstat'
 $cfgPath = Join-Path $PSScriptRoot '..\..\giipAgent.cfg'
 if (Test-Path -LiteralPath $cfgPath) {
   $lines = Get-Content -LiteralPath $cfgPath -Raw
@@ -106,14 +107,14 @@ $KVSConfig['KFactor'] = 'netinv'
 # (디버그) 주입 전 엔드포인트 상태 출력
 Write-Host ("[TRACE] Defaults(before): GiipEndpoint='{0}'" -f $GiipEndpoint)
 if (-not $PSBoundParameters.ContainsKey('SendToGiip')) { if ($KVSConfig.Enabled) { $SendToGiip = $true } }
-if (-not $GiipEndpoint -and $KVSConfig.Endpoint)     { $GiipEndpoint   = $KVSConfig.Endpoint }
-if (-not $GiipCode -and $KVSConfig.FunctionCode)     { $GiipCode       = $KVSConfig.FunctionCode }
-if (-not $GiipUserToken -and $KVSConfig.UserToken)   { $GiipUserToken  = $KVSConfig.UserToken }
-if (-not $GiipUserId -and $KVSConfig.UserId)         { $GiipUserId     = $KVSConfig.UserId }
-if (-not $KType -and $KVSConfig.KType)               { $KType          = $KVSConfig.KType }
-if (-not $KKey -and $KVSConfig.KKey)                 { $KKey           = $KVSConfig.KKey }
-if (-not $KFactor -and $KVSConfig.KFactor)           { $KFactor        = $KVSConfig.KFactor }
-if (-not $HostKey -and $KVSConfig.HostKey)           { $HostKey        = $KVSConfig.HostKey }
+if (-not $GiipEndpoint -and $KVSConfig.Endpoint) { $GiipEndpoint = $KVSConfig.Endpoint }
+if (-not $GiipCode -and $KVSConfig.FunctionCode) { $GiipCode = $KVSConfig.FunctionCode }
+if (-not $GiipUserToken -and $KVSConfig.UserToken) { $GiipUserToken = $KVSConfig.UserToken }
+if (-not $GiipUserId -and $KVSConfig.UserId) { $GiipUserId = $KVSConfig.UserId }
+if (-not $KType -and $KVSConfig.KType) { $KType = $KVSConfig.KType }
+if (-not $KKey -and $KVSConfig.KKey) { $KKey = $KVSConfig.KKey }
+if (-not $KFactor -and $KVSConfig.KFactor) { $KFactor = $KVSConfig.KFactor }
+if (-not $HostKey -and $KVSConfig.HostKey) { $HostKey = $KVSConfig.HostKey }
 # (디버그) 주입 후 엔드포인트 상태 출력
 Write-Host ("[TRACE] Defaults(after):  GiipEndpoint='{0}' ; KVSConfig.Endpoint='{1}'" -f $GiipEndpoint, $KVSConfig.Endpoint)
 # @@ANCHOR:DEFAULT_INJECTION_END
@@ -132,7 +133,7 @@ function New-StableGuidFromString {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($InputString)
     $hash = $md5.ComputeHash($bytes)
     $hex = -join ($hash | ForEach-Object { $_.ToString('x2') })
-    $guidStr = "{0}-{1}-{2}-{3}-{4}" -f $hex.Substring(0,8),$hex.Substring(8,4),$hex.Substring(12,4),$hex.Substring(16,4),$hex.Substring(20,12)
+    $guidStr = "{0}-{1}-{2}-{3}-{4}" -f $hex.Substring(0, 8), $hex.Substring(8, 4), $hex.Substring(12, 4), $hex.Substring(16, 4), $hex.Substring(20, 12)
     return [Guid]$guidStr
   }
   finally { $md5.Dispose() }
@@ -143,19 +144,21 @@ function Get-FirstNonLoopbackIPv4 {
   try {
     if (Test-HasCommand 'Get-NetIPAddress') {
       $ips = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -ne '127.0.0.1' -and $_.ValidLifetime -ne 0 }
-    } else {
+    }
+    else {
       $cfgs = Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEnabled = TRUE' -ErrorAction SilentlyContinue
       foreach ($c in $cfgs) {
-        foreach ($ip in ($c.IPAddress | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' -and $_ -ne '127.0.0.1' })) { $ips += [pscustomobject]@{ IPAddress=$ip; InterfaceIndex=$c.InterfaceIndex } }
+        foreach ($ip in ($c.IPAddress | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' -and $_ -ne '127.0.0.1' })) { $ips += [pscustomobject]@{ IPAddress = $ip; InterfaceIndex = $c.InterfaceIndex } }
       }
     }
-  } catch {}
+  }
+  catch {}
   return ($ips | Select-Object -First 1).IPAddress
 }
 # @@ANCHOR:UTILS_CONVERT_SPEED_START
 function Convert-SpeedStringToBps {
   <# 링크 속도 문자열("1.2 Gbps", "100 Mbps", 1000000000) → Int64 bps 변환 #>
-  param([Parameter(Mandatory=$false)]$Value)
+  param([Parameter(Mandatory = $false)]$Value)
   if ($null -eq $Value -or $Value -eq '') { return $null }
   if ($Value -is [int64] -or $Value -is [int] -or $Value -is [long]) { return [int64]$Value }
   $s = [string]$Value; $s = $s.Trim()
@@ -170,7 +173,7 @@ function Convert-SpeedStringToBps {
       'gbps' { return [int64]($num * 1000000000) }
       'mbps' { return [int64]($num * 1000000) }
       'kbps' { return [int64]($num * 1000) }
-      'bps'  { return [int64]$num }
+      'bps' { return [int64]$num }
       default { return $null }
     }
   }
@@ -189,36 +192,37 @@ function Get-OsHardwareInfo {
   $uptimeSec = $null
   $bootTime = $null
   # @@ANCHOR:SYSTEM_BOOT_TIME_START
-try {
-  if ($os -and $os.LastBootUpTime) {
-    if ($os.LastBootUpTime -is [datetime]) { $bootTime = $os.LastBootUpTime }
-    else { $bootTime = [Management.ManagementDateTimeConverter]::ToDateTime([string]$os.LastBootUpTime) }
+  try {
+    if ($os -and $os.LastBootUpTime) {
+      if ($os.LastBootUpTime -is [datetime]) { $bootTime = $os.LastBootUpTime }
+      else { $bootTime = [Management.ManagementDateTimeConverter]::ToDateTime([string]$os.LastBootUpTime) }
+    }
   }
-} catch { $bootTime = $null }
-if ($bootTime) { $uptimeSec = [int](New-TimeSpan -Start $bootTime -End (Get-Date)).TotalSeconds }
-# @@ANCHOR:SYSTEM_BOOT_TIME_END
+  catch { $bootTime = $null }
+  if ($bootTime) { $uptimeSec = [int](New-TimeSpan -Start $bootTime -End (Get-Date)).TotalSeconds }
+  # @@ANCHOR:SYSTEM_BOOT_TIME_END
   $isVirtual = $false
-  $virtHints = @('VMware','VirtualBox','KVM','Hyper-V','HVM','XEN','QEMU','Parallels','OpenStack','RHEV','HYPER-V','VIRTUAL')
+  $virtHints = @('VMware', 'VirtualBox', 'KVM', 'Hyper-V', 'HVM', 'XEN', 'QEMU', 'Parallels', 'OpenStack', 'RHEV', 'HYPER-V', 'VIRTUAL')
   $modelStr = ($cs.Model + ' ' + $cs.Manufacturer)
   foreach ($h in $virtHints) { if ($modelStr -match [regex]::Escape($h)) { $isVirtual = $true; break } }
 
   [pscustomobject]@{
-    hostname        = $env:COMPUTERNAME
-    fqdn            = $env:COMPUTERNAME
-    domain          = $cs.Domain
-    os_caption      = $os.Caption
-    os_version      = $os.Version
-    os_build        = $os.BuildNumber
-    last_boot_time  = $bootTime
-    uptime_seconds  = $uptimeSec
-    manufacturer    = $cs.Manufacturer
-    model           = $cs.Model
-    serial_number   = $bios.SerialNumber
-    is_virtualized  = $isVirtual
-    cpu_name        = $proc.Name
-    cpu_logical     = $cs.NumberOfLogicalProcessors
-    cpu_physical    = $cs.NumberOfProcessors
-    memory_bytes    = [int64]($mem.TotalPhysicalMemory)
+    hostname       = $env:COMPUTERNAME
+    fqdn           = $env:COMPUTERNAME
+    domain         = $cs.Domain
+    os_caption     = $os.Caption
+    os_version     = $os.Version
+    os_build       = $os.BuildNumber
+    last_boot_time = $bootTime
+    uptime_seconds = $uptimeSec
+    manufacturer   = $cs.Manufacturer
+    model          = $cs.Model
+    serial_number  = $bios.SerialNumber
+    is_virtualized = $isVirtual
+    cpu_name       = $proc.Name
+    cpu_logical    = $cs.NumberOfLogicalProcessors
+    cpu_physical   = $cs.NumberOfProcessors
+    memory_bytes   = [int64]($mem.TotalPhysicalMemory)
   }
 }
 # endregion System Info ------------------------------------------------------
@@ -234,7 +238,8 @@ function Get-NicAdvancedVlanId {
         return ($cand | Select-Object -First 1).DisplayValue
       }
     }
-  } catch {}
+  }
+  catch {}
   return $null
 }
 
@@ -261,7 +266,8 @@ function Get-NetworkAdaptersInfo {
         virtual         = $n.Virtual
       }
     }
-  } else {
+  }
+  else {
     # 폴백: WMI
     $nets = Get-CimInstance Win32_NetworkAdapter -ErrorAction SilentlyContinue | Where-Object { $_.PhysicalAdapter -eq $true -and $_.NetEnabled -ne $null }
     foreach ($n in $nets) {
@@ -316,21 +322,22 @@ function Get-IPConfigurationInfo {
         interface_index = $c.InterfaceIndex
         interface_alias = $c.InterfaceAlias
         dhcp            = [pscustomobject]@{
-                           ipv4 = if ($if4) { $if4.Dhcp } else { $null }
-                           ipv6 = if ($if6) { $if6.Dhcp } else { $null }
-                         }
-        ipv4_addresses  = @($c.IPv4Address | ForEach-Object { [pscustomobject]@{ ip=$_.IPAddress; prefix=$_.PrefixLength } })
-        ipv6_addresses  = @($c.IPv6Address | ForEach-Object { [pscustomobject]@{ ip=$_.IPAddress; prefix=$_.PrefixLength } })
+          ipv4 = if ($if4) { $if4.Dhcp } else { $null }
+          ipv6 = if ($if6) { $if6.Dhcp } else { $null }
+        }
+        ipv4_addresses  = @($c.IPv4Address | ForEach-Object { [pscustomobject]@{ ip = $_.IPAddress; prefix = $_.PrefixLength } })
+        ipv6_addresses  = @($c.IPv6Address | ForEach-Object { [pscustomobject]@{ ip = $_.IPAddress; prefix = $_.PrefixLength } })
         gateways        = $gateways
         dns_servers     = $dnsServers
         dns_suffix      = $dnsSuffix
       }
     }
-  } else {
+  }
+  else {
     foreach ($w in (Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEnabled = TRUE' -ErrorAction SilentlyContinue)) {
       $ipv4s = @(); $ipv6s = @()
       foreach ($ip in $w.IPAddress) {
-        if ($ip -match ':') { $ipv6s += [pscustomobject]@{ ip=$ip; prefix=$null } } else { $ipv4s += [pscustomobject]@{ ip=$ip; prefix=$null } }
+        if ($ip -match ':') { $ipv6s += [pscustomobject]@{ ip = $ip; prefix = $null } } else { $ipv4s += [pscustomobject]@{ ip = $ip; prefix = $null } }
       }
       $cfgs += [pscustomobject]@{
         interface_index = $w.InterfaceIndex
@@ -353,16 +360,17 @@ function Get-RouteTableInfo {
   $routes = @()
   if (Test-HasCommand 'Get-NetRoute') {
     $routes = @(Get-NetRoute -ErrorAction SilentlyContinue | ForEach-Object {
-      [pscustomobject]@{
-        address_family = $_.AddressFamily
-        destination    = $_.DestinationPrefix
-        next_hop       = $_.NextHop
-        interface_idx  = $_.IfIndex
-        metric         = $_.RouteMetric
-        protocol       = $_.Protocol
-      }
-    })
-  } else {
+        [pscustomobject]@{
+          address_family = $_.AddressFamily
+          destination    = $_.DestinationPrefix
+          next_hop       = $_.NextHop
+          interface_idx  = $_.IfIndex
+          metric         = $_.RouteMetric
+          protocol       = $_.Protocol
+        }
+      })
+  }
+  else {
     $text = (route print) 2>$null | Out-String
     $routes = @([pscustomobject]@{ raw_text = $text })
   }
@@ -374,15 +382,16 @@ function Get-NeighborTableInfo {
   $neigh = @()
   if (Test-HasCommand 'Get-NetNeighbor') {
     $neigh = @(Get-NetNeighbor -ErrorAction SilentlyContinue | ForEach-Object {
-      [pscustomobject]@{
-        address_family = $_.AddressFamily
-        ip_address     = $_.IPAddress
-        link_layer     = $_.LinkLayerAddress
-        state          = $_.State
-        interface_idx  = $_.IfIndex
-      }
-    })
-  } else {
+        [pscustomobject]@{
+          address_family = $_.AddressFamily
+          ip_address     = $_.IPAddress
+          link_layer     = $_.LinkLayerAddress
+          state          = $_.State
+          interface_idx  = $_.IfIndex
+        }
+      })
+  }
+  else {
     $raw = (arp -a) 2>$null | Out-String
     # 단순 파싱
     foreach ($line in ($raw -split "`n")) {
@@ -409,17 +418,18 @@ function Get-TcpConnectionsInfo {
     foreach ($p in Get-Process) { $procMap[$p.Id] = $p.ProcessName }
     foreach ($c in $conns) {
       $list += [pscustomobject]@{
-        laddr      = $c.LocalAddress
-        lport      = $c.LocalPort
-        raddr      = $c.RemoteAddress
-        rport      = $c.RemotePort
-        state      = $c.State
-        pid        = $c.OwningProcess
-        proc_name  = $procMap[$c.OwningProcess]
+        laddr        = $c.LocalAddress
+        lport        = $c.LocalPort
+        raddr        = $c.RemoteAddress
+        rport        = $c.RemotePort
+        state        = $c.State
+        pid          = $c.OwningProcess
+        proc_name    = $procMap[$c.OwningProcess]
         applied_rule = $c.AppliedSetting
       }
     }
-  } else {
+  }
+  else {
     # 폴백: netstat -ano
     $procMap = @{}
     foreach ($p in Get-Process) { $procMap[$p.Id] = $p.ProcessName }
@@ -434,7 +444,7 @@ function Get-TcpConnectionsInfo {
           laddr = $matches[2]; lport = [int]$matches[3]
           raddr = $matches[4]; rport = [int]$matches[5]
           state = $matches[6]
-          pid   = $pidVal
+          pid = $pidVal
           proc_name = $procMap[$pidVal]
         }
         $cnt++
@@ -468,11 +478,11 @@ $doc = [pscustomobject]@{
   node_id          = $nodeId
   system           = $sys
   network          = [pscustomobject]@{
-    adapters   = $adapters
-    ipconfigs  = $ipcfgs
-    routes     = $routes
-    neighbors  = $neighbors
-    connections= $tcp
+    adapters    = $adapters
+    ipconfigs   = $ipcfgs
+    routes      = $routes
+    neighbors   = $neighbors
+    connections = $tcp
   }
 }
 # endregion Build Document ---------------------------------------------------
@@ -520,9 +530,9 @@ function Send-GiipApi {
     [string]$KFactor = 'netinv'
   )
   # (디버그) Send-GiipApi 수신 엔드포인트 출력
-Write-Host ("[TRACE] Send-GiipApi: received Endpoint='{0}'" -f $Endpoint)
-$url = Build-ApiUrl -Endpoint $Endpoint -Code $FunctionCode
-Write-Host ("[TRACE] Send-GiipApi: built url='{0}'" -f $url)
+  Write-Host ("[TRACE] Send-GiipApi: received Endpoint='{0}'" -f $Endpoint)
+  $url = Build-ApiUrl -Endpoint $Endpoint -Code $FunctionCode
+  Write-Host ("[TRACE] Send-GiipApi: built url='{0}'" -f $url)
   # URL 유효성 확인 및 디버그 출력
   Write-Verbose ("Built URL: [{0}]" -f $url)
   if (-not [uri]::IsWellFormedUriString($url, [UriKind]::Absolute)) { throw ("Invalid URL built: [{0}]" -f $url) }
@@ -543,7 +553,8 @@ Write-Host ("[TRACE] Send-GiipApi: built url='{0}'" -f $url)
   try {
     $resp = Invoke-RestMethod -Method Post -Uri $url -ContentType 'application/x-www-form-urlencoded' -Body $body -TimeoutSec 120
     return $resp
-  } catch {
+  }
+  catch {
     throw ("giipapi upload failed: {0}" -f $_.Exception.Message)
   }
 }
@@ -558,15 +569,16 @@ try {
   Write-Host ("JSON written: {0}" -f (Resolve-Path $Output))
 
   # (디버그) 출력 블록에서의 엔드포인트/스위치 상태 출력
-Write-Host ("[TRACE] Output block: SendToGiip='{0}' GiipEndpoint='{1}'" -f $SendToGiip, $GiipEndpoint)
-if ($SendToGiip) {
+  Write-Host ("[TRACE] Output block: SendToGiip='{0}' GiipEndpoint='{1}'" -f $SendToGiip, $GiipEndpoint)
+  if ($SendToGiip) {
     if (-not $GiipEndpoint) { throw 'GiipEndpoint is required.' }
     if (-not $KKey) { throw 'KKey (lssn) is required for KVSPut.' }
     $response = Send-GiipApi -Endpoint $GiipEndpoint -FunctionCode $GiipCode -JsonValue $json -UserToken $GiipUserToken -UserId $GiipUserId -KType $KType -KKey $KKey -KFactor $KFactor
     Write-Host "giipapi response:" -ForegroundColor Cyan
     if ($response) { $response | Out-String | Write-Host } else { Write-Host '(no content)' }
   }
-} catch {
+}
+catch {
   Write-Error $_
 }
 # endregion Output -----------------------------------------------------------
