@@ -217,14 +217,26 @@ function Invoke-GiipApiV2 {
             
             # ========== ERROR HANDLING: error 속성 체크 ==========
             # API 응답에 error 속성이 있으면 SP 실행 중 에러 발생
-            if ($response.error) {
-                Write-Host "[DEBUG] ❌ API returned error response" -ForegroundColor Red
-                Write-Host "[DEBUG] Error details: $($response.error | ConvertTo-Json -Compress)" -ForegroundColor Red
-                
-                # error 속성을 표준 RstVal/RstMsg 형식으로 변환
-                return @{
-                    RstVal = "500"
-                    RstMsg = if ($response.error.message) { $response.error.message } else { $response.error | ConvertTo-Json -Compress }
+            # ========== ERROR HANDLING: error 속성 체크 ==========
+            # API 응답에 error 속성이 있으면 SP 실행 중 에러 발생
+            # PSCustomObject 속성 확인을 위해 Select-Object 사용 (안전성 확보)
+            $hasError = $response | Select-Object -ExpandProperty error -ErrorAction SilentlyContinue
+            
+            if ($hasError) {
+                Write-Host "[DEBUG] ❌ API returned error response (Detected via Select-Object)" -ForegroundColor Red
+                try {
+                    $errJson = $response.error | ConvertTo-Json -Depth 5 -Compress
+                    Write-Host "[DEBUG] Error details: $errJson" -ForegroundColor Red
+                    
+                    # error 속성을 표준 RstVal/RstMsg 형식으로 변환
+                    return @{
+                        RstVal = "500"
+                        RstMsg = if ($response.error.message) { $response.error.message } else { $errJson }
+                    }
+                }
+                catch {
+                    Write-Host "[DEBUG] Failed to serialize error details: $_" -ForegroundColor Red
+                    return @{ RstVal = "500"; RstMsg = "Unknown API Error (Serialization Failed)" }
                 }
             }
             
