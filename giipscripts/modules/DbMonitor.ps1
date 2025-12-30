@@ -20,12 +20,13 @@ catch {
     exit 1
 }
 
-# New: Load DbCollector Library
+# New: Load DbCollector & ErrorLog Libraries
 try {
     . (Join-Path $LibDir "DbCollector.ps1")
+    . (Join-Path $LibDir "ErrorLog.ps1")
 }
 catch {
-    Write-GiipLog "ERROR" "[DbMonitor] Failed to load DbCollector.ps1 from $LibDir"
+    Write-GiipLog "ERROR" "[DbMonitor] Failed to load libraries from $LibDir"
     exit 1
 }
 
@@ -101,39 +102,28 @@ if ($statsList.Count -gt 0) {
         $mdb_id = $stat.mdb_id
         
         try {
-            $body = @{
-                text        = "MdbStatsUpdate"
-                token       = $Config.sk
-                mdb_id      = $mdb_id
-                uptime      = $stat.uptime
-                threads     = $stat.threads
-                qps         = $stat.qps
-                buffer_pool = $stat.buffer_pool
-                cpu         = $stat.cpu
-                memory      = $stat.memory
-            }
+            # 🔧 Refactored: Send as individual parameters via standard Invoke-GiipApiV2
+            # The text field lists parameters for the gateway to map from JsonData
+            $cmdText = "MdbStatsUpdate mdb_id uptime threads qps buffer_pool cpu memory"
+            $statJson = $stat | ConvertTo-Json -Compress
+            
+            $response = Invoke-GiipApiV2 -Config $Config -CommandText $cmdText -JsonData $statJson
         
-            $apiUri = if ($Config.apiaddrv2) { $Config.apiaddrv2 } else { "https://giipfaw.azurewebsites.net/api/giipApiSk2" }
-            $response = Invoke-RestMethod -Uri $apiUri -Method Post -Body ($body | ConvertTo-Json -Compress) -ContentType "application/json" -ErrorAction Stop
-        
-            if ($response.RstVal -eq "200") {
+            if ($response -and $response.RstVal -eq "200") {
                 Write-GiipLog "INFO" "[DbMonitor] ✅ MdbStatsUpdate SUCCESS for DB $mdb_id"
             }
             else {
-                Write-GiipLog "WARN" "[DbMonitor] ⚠️ MdbStatsUpdate FAILED for DB ${mdb_id}: RstVal=$($response.RstVal), RstMsg=$($response.RstMsg)"
+                $rstVal = if ($response) { $response.RstVal } else { "NULL" }
+                $rstMsg = if ($response) { $response.RstMsg } else { "No response" }
+                Write-GiipLog "WARN" "[DbMonitor] ⚠️ MdbStatsUpdate FAILED for DB ${mdb_id}: RstVal=$rstVal, RstMsg=$rstMsg"
                 
-                # ErrorLog logic omitted for conciseness, preserving log file writing
-                try {
-                    $logDir = Join-Path $PSScriptRoot "..\\..\\logs"
-                    if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
-                    $debugFile = Join-Path $logDir "dbmonitor_error_$mdb_id.json"
-                    @{ Timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss"); Request = $body; Response = $response } | ConvertTo-Json -Depth 5 | Set-Content -Path $debugFile -Encoding UTF8
-                }
-                catch {}
+                # Use standard error logging to server
+                sendErrorLog -Config $Config -Message "[DbMonitor] MdbStatsUpdate API FAILED for DB $mdb_id" -Data $stat -Severity "error"
             }
         }
         catch {
             Write-GiipLog "ERROR" "[DbMonitor] ❌ Exception sending stats for DB ${mdb_id}: $_"
+            sendErrorLog -Config $Config -Message "[DbMonitor] Exception in Send Loop" -Data $_.Exception -Severity "critical"
         }
     }
     
