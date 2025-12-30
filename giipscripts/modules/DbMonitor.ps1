@@ -366,128 +366,129 @@ if ($statsList.Count -gt 0) {
     catch {
         Write-GiipLog "WARN" "[DbMonitor] Failed to log debug info: $_"
     }
-    
-    try {
-        $jsonPayload = $statsList | ConvertTo-Json -Compress
-        Write-GiipLog "INFO" "[DbMonitor] Sending stats for $($statsList.Count) databases..."
-        Write-GiipLog "DEBUG" "[DbMonitor] Stats Payload: $jsonPayload"
+
+    # 3. Send Stats (Individually per DB)
+    foreach ($stat in $statsList) {
+        $mdb_id = $stat.mdb_id
         
-        # Must include 'jsondata' to pass payload to SP
-        $response = Invoke-GiipApiV2 -Config $Config -CommandText "MdbStatsUpdate jsondata" -JsonData $jsonPayload
-        
-        # ========== DEBUG: Response Validation ==========
-        Write-Host "[DbMonitor] Response Type: $($response.GetType().Name)" -ForegroundColor Cyan
-        if ($response -is [PSCustomObject]) {
-            $props = $response.PSObject.Properties.Name
-            Write-Host "[DbMonitor] Response Properties: $($props -join ', ')" -ForegroundColor Cyan
-            Write-Host "[DbMonitor] RstVal: '$($response.RstVal)'" -ForegroundColor Cyan
-            Write-Host "[DbMonitor] RstMsg: '$($response.RstMsg)'" -ForegroundColor Cyan
-        }
-        
-        if ($response.RstVal -eq "200") {
-            Write-GiipLog "INFO" "[DbMonitor] ✅ MdbStatsUpdate SUCCESS - last_check_dt should be updated"
-        }
-        else {
-            Write-GiipLog "WARN" "[DbMonitor] ⚠️ MdbStatsUpdate FAILED: RstVal=$($response.RstVal), RstMsg=$($response.RstMsg)"
+        try {
+            # 개별 파라미터 구성 (SP: pApiMdbStatsUpdatebySK)
+            # Body에 SP 파라미터들을 직접 평면적으로(Flat) 넣음
+            $body = @{
+                text        = "MdbStatsUpdate" # API Router용
+                token       = $Config.sk       # API 인증용 (Run.ps1에서 @sk로 매핑)
             
-            # 에러로그 DB에 기록
+                # SP 파라미터
+                mdb_id      = $mdb_id
+                uptime      = $stat.uptime
+                threads     = $stat.threads
+                qps         = $stat.qps
+                buffer_pool = $stat.buffer_pool
+                cpu         = $stat.cpu
+                memory      = $stat.memory
+            }
+        
+            # API URL (Config에서 로드된 apiaddrv2 사용 가정, 없으면 기본값)
+            $apiUri = if ($Config.apiaddrv2) { $Config.apiaddrv2 } else { "https://giipfaw.azurewebsites.net/api/giipApiSk2" }
+        
+            # API 호출
+            $response = Invoke-RestMethod -Uri $apiUri -Method Post -Body ($body | ConvertTo-Json -Compress) -ContentType "application/json" -ErrorAction Stop
+        
+            if ($response.RstVal -eq "200") {
+                Write-GiipLog "INFO" "[DbMonitor] ✅ MdbStatsUpdate SUCCESS for DB $mdb_id"
+            }
+            else {
+                Write-GiipLog "WARN" "[DbMonitor] ⚠️ MdbStatsUpdate FAILED for DB $mdb_id: RstVal=$($response.RstVal), RstMsg=$($response.RstMsg)"
+            
+                # 실패 시 에러로그 기록
+                try {
+                    $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
+                    if (Test-Path $errorLogPath) {
+                        . $errorLogPath
+                        $errData = @{
+                            api         = "MdbStatsUpdate"
+                            mdb_id      = $mdb_id
+                            RstVal      = "$($response.RstVal)"
+                            RstMsg      = "$($response.RstMsg)"
+                            requestBody = $body | ConvertTo-Json -Compress
+                        } | ConvertTo-Json -Compress
+
+                        sendErrorLog -Config $Config `
+                            -Message "[DbMonitor] MdbStatsUpdate API failed for DB $mdb_id" `
+                            -Data $errData `
+                            -Severity "error" `
+                            -ErrorType "MdbStatsUpdateFailed"
+                    }
+                }
+                catch {
+                    Write-GiipLog "WARN" "[DbMonitor] Failed to log error: $_"
+                }
+
+                # 로컬 디버그 파일 저장
+                try {
+                    $logDir = Join-Path $PSScriptRoot "..\\..\\logs"
+                    if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+                    $debugFile = Join-Path $logDir "dbmonitor_error_$mdb_id.json"
+                
+                    $debugInfo = @{
+                        Timestamp   = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+                        RequestBody = $body
+                        ApiResponse = $response
+                    }
+                    $debugInfo | ConvertTo-Json -Depth 5 | Set-Content -Path $debugFile -Encoding UTF8
+                }
+                catch { }
+            }
+        }
+        catch {
+            Write-GiipLog "ERROR" "[DbMonitor] ❌ Exception sending stats for DB $mdb_id: $_"
+        
+            # 예외 로그 기록
             try {
                 $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
                 if (Test-Path $errorLogPath) {
                     . $errorLogPath
-                    
                     $errData = @{
-                        api            = "MdbStatsUpdate"
-                        dbCount        = $statsList.Count
-                        RstVal         = "$($response.RstVal)"
-                        RstMsg         = "$($response.RstMsg)"
-                        payloadPreview = if ($jsonPayload.Length -gt 1000) { $jsonPayload.Substring(0, 1000) } else { $jsonPayload }
-                        fullResponse   = $response | ConvertTo-Json -Depth 5 -Compress -ErrorAction SilentlyContinue
+                        api       = "MdbStatsUpdate"
+                        mdb_id    = $mdb_id
+                        exception = $_.Exception.Message
                     } | ConvertTo-Json -Compress
 
                     sendErrorLog -Config $Config `
-                        -Message "[DbMonitor] MdbStatsUpdate API failed - last_check_dt not updated" `
+                        -Message "[DbMonitor] Exception sending stats for DB $mdb_id" `
                         -Data $errData `
                         -Severity "error" `
-                        -ErrorType "MdbStatsUpdateFailed"
+                        -ErrorType "MdbStatsUpdateException"
                 }
             }
-            catch {
-                Write-GiipLog "WARN" "[DbMonitor] Failed to log error: $_"
-            }
-
-            # [DEBUG] 로컬 파일 로깅 (DB 로깅 실패 대비)
-            try {
-                $logDir = Join-Path $PSScriptRoot "..\..\logs"
-                if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
-                $debugFile = Join-Path $logDir "dbmonitor_debug.json"
-                
-                $debugInfo = @{
-                    Timestamp      = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-                    RequestPayload = $jsonPayload
-                    ApiResponse    = $response
-                }
-                $debugInfo | ConvertTo-Json -Depth 5 | Set-Content -Path $debugFile -Encoding UTF8
-            }
-            catch {
-                Write-GiipLog "WARN" "[DbMonitor] Failed to save local debug file: $_"
-            }
+            catch { }
         }
     }
-    catch {
-        Write-GiipLog "ERROR" "[DbMonitor] ❌ Exception during MdbStatsUpdate: $_"
-        Write-GiipLog "ERROR" "[DbMonitor] Stack Trace: $($_.ScriptStackTrace)"
-        
-        # 예외 발생 시에도 에러로그 기록
+    else {
+        $dbCount = if ($dbList) { $dbList.Count } else { 0 }
+        Write-GiipLog "WARN" "[DbMonitor] No metrics collected (Count=$dbCount) - last_check_dt will NOT be updated"
+    
+        # 메트릭 수집 실패도 에러로그에 기록
         try {
             $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
             if (Test-Path $errorLogPath) {
                 . $errorLogPath
-                
+            
                 $errData = @{
-                    api        = "MdbStatsUpdate"
-                    dbCount    = $statsList.Count
-                    exception  = $_.Exception.Message
-                    stackTrace = $_.ScriptStackTrace
+                    dbListCount = $dbCount
+                    note        = "Check DB connection settings or permissions"
                 } | ConvertTo-Json -Compress
-
+            
                 sendErrorLog -Config $Config `
-                    -Message "[DbMonitor] Exception during MdbStatsUpdate - last_check_dt not updated" `
+                    -Message "[DbMonitor] No DB metrics collected (Count=$dbCount)" `
                     -Data $errData `
-                    -Severity "error" `
-                    -ErrorType "MdbStatsUpdateException"
+                    -Severity "warn" `
+                    -ErrorType "NoMetricsCollected"
             }
         }
         catch {
-            Write-GiipLog "WARN" "[DbMonitor] Failed to log exception: $_"
+            Write-GiipLog "WARN" "[DbMonitor] Failed to log warning: $_"
         }
     }
-}
-else {
-    $dbCount = if ($dbList) { $dbList.Count } else { 0 }
-    Write-GiipLog "WARN" "[DbMonitor] No metrics collected (Count=$dbCount) - last_check_dt will NOT be updated"
-    
-    # 메트릭 수집 실패도 에러로그에 기록
-    try {
-        $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
-        if (Test-Path $errorLogPath) {
-            . $errorLogPath
-            
-            $errData = @{
-                dbListCount = $dbCount
-                note        = "Check DB connection settings or permissions"
-            } | ConvertTo-Json -Compress
-            
-            sendErrorLog -Config $Config `
-                -Message "[DbMonitor] No DB metrics collected (Count=$dbCount)" `
-                -Data $errData `
-                -Severity "warn" `
-                -ErrorType "NoMetricsCollected"
-        }
-    }
-    catch {
-        Write-GiipLog "WARN" "[DbMonitor] Failed to log warning: $_"
-    }
-}
 
-exit 0
+    exit 0
