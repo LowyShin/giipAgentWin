@@ -157,9 +157,32 @@ foreach ($db in $dbList) {
 
                 $conn.Close()
                 $statsList += $stat
+                Write-GiipLog "DEBUG" "[DbMonitor] ✅ Successfully collected metrics for DB $mdb_id ($dbHost)"
             }
             catch {
-                Write-GiipLog "WARN" "[DbMonitor] MSSQL Connection failed for $($dbHost): $_"
+                Write-GiipLog "WARN" "[DbMonitor] ❌ MSSQL Connection failed for DB $mdb_id ($dbHost): $_"
+                
+                # DB 연결 실패도 에러로그에 기록
+                try {
+                    $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
+                    if (Test-Path $errorLogPath) {
+                        . $errorLogPath
+                        sendErrorLog -Config $Config `
+                            -Message "[DbMonitor] MSSQL connection failed - metrics not collected" `
+                            -Data @{
+                            mdb_id    = $mdb_id
+                            db_host   = $dbHost
+                            db_port   = $port
+                            db_type   = $db_type
+                            exception = $_.Exception.Message
+                        } `
+                            -Severity "warn" `
+                            -ErrorType "DbConnectionFailed"
+                    }
+                }
+                catch {
+                    Write-GiipLog "WARN" "[DbMonitor] Failed to log DB connection error: $_"
+                }
             }
         }
         elseif ($db_type -match 'MySQL|MariaDB') {
