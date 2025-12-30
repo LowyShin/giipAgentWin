@@ -142,6 +142,28 @@ function Send-ConnectionData {
     
     $response = Invoke-GiipKvsPut -Config $Config -Type "database" -Key "$MdbId" -Factor "db_connections" -Value $ConnList
     
+    # ========== DEBUG: 응답 검증 ==========
+    if ($null -eq $response) {
+        Write-GiipLog "ERROR" "[DbConnectionList] ❌ API returned NULL for DB $MdbId"
+        Write-Host "[DbConnectionList] Response is NULL!" -ForegroundColor Red
+        return $false
+    }
+    
+    Write-Host "[DbConnectionList] Response Type: $($response.GetType().Name)" -ForegroundColor Cyan
+    
+    if ($response -is [PSCustomObject]) {
+        $props = $response.PSObject.Properties.Name
+        Write-Host "[DbConnectionList] Response Properties: $($props -join ', ')" -ForegroundColor Cyan
+        Write-Host "[DbConnectionList] RstVal: '$($response.RstVal)'" -ForegroundColor Cyan
+        Write-Host "[DbConnectionList] RstMsg: '$($response.RstMsg)'" -ForegroundColor Cyan
+    }
+    elseif ($response -is [Hashtable]) {
+        Write-Host "[DbConnectionList] Response Keys: $($response.Keys -join ', ')" -ForegroundColor Cyan
+    }
+    else {
+        Write-Host "[DbConnectionList] Response Content: $response" -ForegroundColor Cyan
+    }
+    
     if ($response.RstVal -eq "200") {
         Write-GiipLog "INFO" "[DbConnectionList] Success for DB $MdbId."
         return $true

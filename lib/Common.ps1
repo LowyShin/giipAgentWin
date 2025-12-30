@@ -176,11 +176,68 @@ function Invoke-GiipApiV2 {
             -TimeoutSec 30 `
             -UseBasicParsing
         
-        # JSON 응답 파싱
-        $response = $webResponse.Content | ConvertFrom-Json
-        return $response
+        # ========== DEBUG: 응답 상세 정보 출력 ==========
+        Write-Host "----------------[ API RESPONSE DEBUG ]----------------" -ForegroundColor Magenta
+        Write-Host "Status Code    : $($webResponse.StatusCode)" -ForegroundColor Yellow
+        Write-Host "Content Type   : $($webResponse.Headers['Content-Type'])" -ForegroundColor Yellow
+        Write-Host "Content Length : $($webResponse.Content.Length) bytes" -ForegroundColor Yellow
+        
+        # 응답 내용 미리보기 (처음 500자)
+        $previewLen = [Math]::Min(500, $webResponse.Content.Length)
+        Write-Host "Response Preview (first $previewLen chars):" -ForegroundColor Yellow
+        Write-Host $webResponse.Content.Substring(0, $previewLen) -ForegroundColor Gray
+        Write-Host "------------------------------------------------------" -ForegroundColor Magenta
+        
+        # JSON 응답 파싱 시도
+        try {
+            $response = $webResponse.Content | ConvertFrom-Json
+            Write-Host "[DEBUG] ✅ JSON Parse SUCCESS" -ForegroundColor Green
+            
+            # 파싱된 JSON 구조 출력
+            if ($response) {
+                Write-Host "[DEBUG] Response Type: $($response.GetType().Name)" -ForegroundColor Cyan
+                if ($response -is [PSCustomObject]) {
+                    $props = $response.PSObject.Properties.Name
+                    Write-Host "[DEBUG] Response Properties: $($props -join ', ')" -ForegroundColor Cyan
+                }
+            }
+            
+            return $response
+        }
+        catch {
+            # JSON 파싱 실패 - 상세 정보 출력
+            Write-Host "[DEBUG] ❌ JSON Parse FAILED" -ForegroundColor Red
+            Write-Host "[DEBUG] Parse Error: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "[DEBUG] Full Response Content:" -ForegroundColor Red
+            Write-Host $webResponse.Content -ForegroundColor Gray
+            
+            # 파일로도 저장 (긴 응답 대비)
+            try {
+                $base = if ($Global:BaseDir) { $Global:BaseDir } else { Split-Path -Parent $PSScriptRoot }
+                $logDir = Join-Path $base "../giipLogs/api_errors"
+                if (-not (Test-Path $logDir)) { New-Item -Path $logDir -ItemType Directory -Force | Out-Null }
+                
+                $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+                $errorFile = Join-Path $logDir "api_response_error_$timestamp.txt"
+                $webResponse.Content | Out-File -FilePath $errorFile -Encoding utf8
+                Write-Host "[DEBUG] Response saved to: $errorFile" -ForegroundColor Yellow
+            }
+            catch {
+                Write-Host "[DEBUG] Failed to save response file: $_" -ForegroundColor Red
+            }
+            
+            $errMsg = ($_.Exception.Message -replace '"', "'" -replace '`', '')
+            Write-GiipLog 'ERROR' ('API Call Failed (' + $CommandText + '): ' + $errMsg)
+            Write-GiipLog 'ERROR' ('Response Content Length: ' + $webResponse.Content.Length)
+            return $null
+        }
     }
     catch {
+        # HTTP 요청 자체가 실패한 경우
+        Write-Host "[DEBUG] ❌ HTTP Request FAILED" -ForegroundColor Red
+        Write-Host "[DEBUG] Error Type: $($_.Exception.GetType().Name)" -ForegroundColor Red
+        Write-Host "[DEBUG] Error Message: $($_.Exception.Message)" -ForegroundColor Red
+        
         $errMsg = ($_.Exception.Message -replace '"', "'" -replace '`', '')
         Write-GiipLog 'ERROR' ('API Call Failed (' + $CommandText + '): ' + $errMsg)
         return $null
