@@ -398,7 +398,7 @@ if ($statsList.Count -gt 0) {
                 Write-GiipLog "INFO" "[DbMonitor] ✅ MdbStatsUpdate SUCCESS for DB $mdb_id"
             }
             else {
-                Write-GiipLog "WARN" "[DbMonitor] ⚠️ MdbStatsUpdate FAILED for DB $mdb_id: RstVal=$($response.RstVal), RstMsg=$($response.RstMsg)"
+                Write-GiipLog "WARN" "[DbMonitor] ⚠️ MdbStatsUpdate FAILED for DB ${mdb_id}: RstVal=$($response.RstVal), RstMsg=$($response.RstMsg)"
             
                 # 실패 시 에러로그 기록
                 try {
@@ -441,7 +441,7 @@ if ($statsList.Count -gt 0) {
             }
         }
         catch {
-            Write-GiipLog "ERROR" "[DbMonitor] ❌ Exception sending stats for DB $mdb_id: $_"
+            Write-GiipLog "ERROR" "[DbMonitor] ❌ Exception sending stats for DB ${mdb_id}: $_"
         
             # 예외 로그 기록
             try {
