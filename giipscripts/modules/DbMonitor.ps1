@@ -273,15 +273,17 @@ foreach ($db in $dbList) {
                     $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
                     if (Test-Path $errorLogPath) {
                         . $errorLogPath
-                        sendErrorLog -Config $Config `
-                            -Message "[DbMonitor] MSSQL connection failed - metrics not collected" `
-                            -Data @{
+                        $errData = @{
                             mdb_id    = $mdb_id
                             db_host   = $dbHost
                             db_port   = $port
                             db_type   = $db_type
                             exception = $_.Exception.Message
-                        } `
+                        } | ConvertTo-Json -Compress
+                        
+                        sendErrorLog -Config $Config `
+                            -Message "[DbMonitor] MSSQL connection failed - metrics not collected" `
+                            -Data $errData `
                             -Severity "warn" `
                             -ErrorType "DbConnectionFailed"
                     }
@@ -393,16 +395,19 @@ if ($statsList.Count -gt 0) {
                 $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
                 if (Test-Path $errorLogPath) {
                     . $errorLogPath
-                    sendErrorLog -Config $Config `
-                        -Message "[DbMonitor] MdbStatsUpdate API failed - last_check_dt not updated" `
-                        -Data @{
+                    
+                    $errData = @{
                         api            = "MdbStatsUpdate"
                         dbCount        = $statsList.Count
                         RstVal         = "$($response.RstVal)"
                         RstMsg         = "$($response.RstMsg)"
                         payloadPreview = if ($jsonPayload.Length -gt 1000) { $jsonPayload.Substring(0, 1000) } else { $jsonPayload }
                         fullResponse   = $response | ConvertTo-Json -Depth 5 -Compress -ErrorAction SilentlyContinue
-                    } `
+                    } | ConvertTo-Json -Compress
+
+                    sendErrorLog -Config $Config `
+                        -Message "[DbMonitor] MdbStatsUpdate API failed - last_check_dt not updated" `
+                        -Data $errData `
                         -Severity "error" `
                         -ErrorType "MdbStatsUpdateFailed"
                 }
@@ -418,14 +423,11 @@ if ($statsList.Count -gt 0) {
                 $debugFile = Join-Path $logDir "dbmonitor_debug.json"
                 
                 $debugInfo = @{
-                    Timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-                    RstVal    = "$($response.RstVal)"
-                    RstMsg    = "$($response.RstMsg)"
-                    Payload   = $jsonPayload
-                    FullRes   = $response
+                    Timestamp      = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+                    RequestPayload = $jsonPayload
+                    ApiResponse    = $response
                 }
-                $debugInfo | ConvertTo-Json -Depth 5 | Out-File $debugFile -Encoding UTF8 -Force
-                Write-GiipLog "INFO" "[DbMonitor] Debug data saved to $debugFile"
+                $debugInfo | ConvertTo-Json -Depth 5 | Set-Content -Path $debugFile -Encoding UTF8
             }
             catch {
                 Write-GiipLog "WARN" "[DbMonitor] Failed to save local debug file: $_"
@@ -441,16 +443,19 @@ if ($statsList.Count -gt 0) {
             $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
             if (Test-Path $errorLogPath) {
                 . $errorLogPath
-                sendErrorLog -Config $Config `
-                    -Message "[DbMonitor] Exception during MdbStatsUpdate - last_check_dt not updated" `
-                    -Data @{
+                
+                $errData = @{
                     api        = "MdbStatsUpdate"
                     dbCount    = $statsList.Count
                     exception  = $_.Exception.Message
                     stackTrace = $_.ScriptStackTrace
-                } `
+                } | ConvertTo-Json -Compress
+
+                sendErrorLog -Config $Config `
+                    -Message "[DbMonitor] Exception during MdbStatsUpdate - last_check_dt not updated" `
+                    -Data $errData `
                     -Severity "error" `
-                    -Error Type "MdbStatsUpdateException"
+                    -ErrorType "MdbStatsUpdateException"
             }
         }
         catch {
@@ -459,19 +464,23 @@ if ($statsList.Count -gt 0) {
     }
 }
 else {
-    Write-GiipLog "WARN" "[DbMonitor] No metrics collected - last_check_dt will NOT be updated"
+    $dbCount = if ($dbList) { $dbList.Count } else { 0 }
+    Write-GiipLog "WARN" "[DbMonitor] No metrics collected (Count=$dbCount) - last_check_dt will NOT be updated"
     
     # 메트릭 수집 실패도 에러로그에 기록
     try {
         $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
         if (Test-Path $errorLogPath) {
             . $errorLogPath
-            sendErrorLog -Config $Config `
-                -Message "[DbMonitor] No DB metrics collected - unable to update last_check_dt" `
-                -Data @{
-                dbListCount = if ($dbList) { $dbList.Count } else { 0 }
+            
+            $errData = @{
+                dbListCount = $dbCount
                 note        = "Check DB connection settings or permissions"
-            } `
+            } | ConvertTo-Json -Compress
+            
+            sendErrorLog -Config $Config `
+                -Message "[DbMonitor] No DB metrics collected (Count=$dbCount)" `
+                -Data $errData `
                 -Severity "warn" `
                 -ErrorType "NoMetricsCollected"
         }
