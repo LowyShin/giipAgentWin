@@ -27,6 +27,38 @@ try {
 }
 catch {
     Write-GiipLog "ERROR" "[DbMonitor] Failed to load config: $_"
+    
+    # Config 로드 실패를 에러로그에 기록 (ErrorLog.ps1이 로드되지 않았으므로 직접 API 호출)
+    try {
+        # Try to load ErrorLog.ps1
+        $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
+        if (Test-Path $errorLogPath) {
+            . $errorLogPath
+            
+            # Get minimal config for error logging
+            $minimalConfig = @{
+                sk        = if ($env:GIIP_SK) { $env:GIIP_SK } else { "CONFIG_FAILED" }
+                apiaddrv2 = "https://giipfaw.azurewebsites.net/api/giipApiSk2"
+            }
+            
+            sendErrorLog -Config $minimalConfig `
+                -Message "[DbMonitor] FATAL: Failed to load config" `
+                -Data @{
+                step      = "DbMonitor_ConfigLoadFailed"
+                exception = $_.Exception.Message
+                scriptDir = $ScriptDir
+                agentRoot = $AgentRoot
+                libDir    = $LibDir
+            } `
+                -Severity "critical" `
+                -ErrorType "DbMonitor_Fatal"
+        }
+    }
+    catch {
+        # If error logging also fails, just write to console
+        Write-Host "[DbMonitor] Failed to log config error: $_"
+    }
+    
     exit 1
 }
 

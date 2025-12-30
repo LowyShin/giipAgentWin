@@ -145,7 +145,15 @@ function Invoke-GiipApiV2 {
         Write-Host "----------------[ API DEBUG ]----------------" -ForegroundColor Cyan
         Write-Host "URL : $Uri"
         Write-Host "CMD : $CommandText"
-        Write-Host "JSON: $JsonData"
+        
+        # Limit JSON output to prevent console spam
+        if ($JsonData.Length -gt 200) {
+            Write-Host "JSON: $($JsonData.Substring(0, 200))... (truncated, $($JsonData.Length) bytes total)"
+        }
+        else {
+            Write-Host "JSON: $JsonData"
+        }
+        
         Write-Host "---------------------------------------------" -ForegroundColor Cyan
 
         # ⚠️ FIX: UTF-8 인코딩 명시 (일본어/한국어/중국어 등 모든 문자 지원)
