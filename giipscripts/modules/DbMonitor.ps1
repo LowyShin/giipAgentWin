@@ -219,23 +219,96 @@ if ($statsList.Count -gt 0) {
     try {
         $jsonPayload = $statsList | ConvertTo-Json -Compress
         Write-GiipLog "INFO" "[DbMonitor] Sending stats for $($statsList.Count) databases..."
+        Write-GiipLog "DEBUG" "[DbMonitor] Stats Payload: $jsonPayload"
         
         # Must include 'jsondata' to pass payload to SP
         $response = Invoke-GiipApiV2 -Config $Config -CommandText "MdbStatsUpdate jsondata" -JsonData $jsonPayload
         
+        # ========== DEBUG: Response Validation ==========
+        Write-Host "[DbMonitor] Response Type: $($response.GetType().Name)" -ForegroundColor Cyan
+        if ($response -is [PSCustomObject]) {
+            $props = $response.PSObject.Properties.Name
+            Write-Host "[DbMonitor] Response Properties: $($props -join ', ')" -ForegroundColor Cyan
+            Write-Host "[DbMonitor] RstVal: '$($response.RstVal)'" -ForegroundColor Cyan
+            Write-Host "[DbMonitor] RstMsg: '$($response.RstMsg)'" -ForegroundColor Cyan
+        }
+        
         if ($response.RstVal -eq "200") {
-            Write-GiipLog "INFO" "[DbMonitor] Success."
+            Write-GiipLog "INFO" "[DbMonitor] ✅ MdbStatsUpdate SUCCESS - last_check_dt should be updated"
         }
         else {
-            Write-GiipLog "WARN" "[DbMonitor] API Error: $($response.RstVal) - $($response.RstMsg)"
+            Write-GiipLog "WARN" "[DbMonitor] ⚠️ MdbStatsUpdate FAILED: RstVal=$($response.RstVal), RstMsg=$($response.RstMsg)"
+            
+            # 에러로그 DB에 기록
+            try {
+                $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
+                if (Test-Path $errorLogPath) {
+                    . $errorLogPath
+                    sendErrorLog -Config $Config `
+                        -Message "[DbMonitor] MdbStatsUpdate API failed - last_check_dt not updated" `
+                        -Data @{
+                        api           = "MdbStatsUpdate"
+                        dbCount       = $statsList.Count
+                        RstVal        = $response.RstVal
+                        RstMsg        = $response.RstMsg
+                        payloadLength = $jsonPayload.Length
+                    } `
+                        -Severity "error" `
+                        -ErrorType "MdbStatsUpdateFailed"
+                }
+            }
+            catch {
+                Write-GiipLog "WARN" "[DbMonitor] Failed to log error: $_"
+            }
         }
     }
     catch {
-        Write-GiipLog "ERROR" "[DbMonitor] Failed to send stats: $_"
+        Write-GiipLog "ERROR" "[DbMonitor] ❌ Exception during MdbStatsUpdate: $_"
+        Write-GiipLog "ERROR" "[DbMonitor] Stack Trace: $($_.ScriptStackTrace)"
+        
+        # 예외 발생 시에도 에러로그 기록
+        try {
+            $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
+            if (Test-Path $errorLogPath) {
+                . $errorLogPath
+                sendErrorLog -Config $Config `
+                    -Message "[DbMonitor] Exception during MdbStatsUpdate - last_check_dt not updated" `
+                    -Data @{
+                    api        = "MdbStatsUpdate"
+                    dbCount    = $statsList.Count
+                    exception  = $_.Exception.Message
+                    stackTrace = $_.ScriptStackTrace
+                } `
+                    -Severity "error" `
+                    -Error Type "MdbStatsUpdateException"
+            }
+        }
+        catch {
+            Write-GiipLog "WARN" "[DbMonitor] Failed to log exception: $_"
+        }
     }
 }
 else {
-    Write-GiipLog "INFO" "[DbMonitor] No metrics collected."
+    Write-GiipLog "WARN" "[DbMonitor] No metrics collected - last_check_dt will NOT be updated"
+    
+    # 메트릭 수집 실패도 에러로그에 기록
+    try {
+        $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
+        if (Test-Path $errorLogPath) {
+            . $errorLogPath
+            sendErrorLog -Config $Config `
+                -Message "[DbMonitor] No DB metrics collected - unable to update last_check_dt" `
+                -Data @{
+                dbListCount = if ($dbList) { $dbList.Count } else { 0 }
+                note        = "Check DB connection settings or permissions"
+            } `
+                -Severity "warn" `
+                -ErrorType "NoMetricsCollected"
+        }
+    }
+    catch {
+        Write-GiipLog "WARN" "[DbMonitor] Failed to log warning: $_"
+    }
 }
 
 exit 0
