@@ -133,4 +133,4 @@ function sendErrorLog {
     }
 }
 
-Export-ModuleMember -Function sendErrorLog
+
