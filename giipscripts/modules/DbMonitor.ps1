@@ -91,6 +91,11 @@ try {
     }
 
     Write-GiipLog "INFO" "[DbMonitor] Found $($dbList.Count) databases to monitor."
+    
+    # ========== CRITICAL DEBUG: Log DB list details ==========
+    foreach ($db in $dbList) {
+        Write-GiipLog "DEBUG" "[DbMonitor] Will monitor: DB ID=$($db.mdb_id), Name=$($db.db_name), Host=$($db.db_host), Type=$($db.db_type)"
+    }
 
 }
 catch {
