@@ -65,7 +65,7 @@ function Get-GiipDbMetrics {
             return $stat
         }
         catch {
-            Write-GiipLog "WARN" "[DbCollector] ❌ MSSQL Connection failed for DB $mdb_id: $_"
+            Write-GiipLog "WARN" "[DbCollector] ❌ MSSQL Connection failed for DB ${mdb_id}: $_"
             
             # Error Logging (DbConnectionFailed)
             try {
@@ -126,7 +126,7 @@ function Get-GiipDbMetrics {
                 return $stat
             }
             catch {
-                Write-GiipLog "WARN" "[DbCollector] MySQL Error for $dbHost: $_"
+                Write-GiipLog "WARN" "[DbCollector] MySQL Error for ${dbHost}: $_"
                 return $null
             }
         }
