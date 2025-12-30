@@ -214,6 +214,20 @@ function Invoke-GiipApiV2 {
             # giipApiSk2는 { "data": [{RstVal, RstMsg}], "debug": {...} } 형식으로 응답
             # 하지만 호출자는 { RstVal, RstMsg } 직접 접근을 기대함
             # → data[0]을 자동으로 추출하여 반환
+            
+            # ========== ERROR HANDLING: error 속성 체크 ==========
+            # API 응답에 error 속성이 있으면 SP 실행 중 에러 발생
+            if ($response.error) {
+                Write-Host "[DEBUG] ❌ API returned error response" -ForegroundColor Red
+                Write-Host "[DEBUG] Error details: $($response.error | ConvertTo-Json -Compress)" -ForegroundColor Red
+                
+                # error 속성을 표준 RstVal/RstMsg 형식으로 변환
+                return @{
+                    RstVal = "500"
+                    RstMsg = if ($response.error.message) { $response.error.message } else { $response.error | ConvertTo-Json -Compress }
+                }
+            }
+            
             if ($response.data -and $response.data -is [Array] -and $response.data.Count -gt 0) {
                 Write-Host "[DEBUG] 🔧 Unwrapping giipApiSk2 response structure (data[0])" -ForegroundColor Yellow
                 $unwrapped = $response.data[0]
