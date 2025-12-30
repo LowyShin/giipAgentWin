@@ -9,8 +9,8 @@ Write-Host ""
 # 1. Load Libraries
 Write-Host "[1/4] Loading libraries..." -NoNewline
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-# Override BaseDir for test script context to correctly find config in current dir
-$Global:BaseDir = "$scriptDir\lib" 
+# Set BaseDir to script directory so config search looks in parent directory
+$Global:BaseDir = $scriptDir 
 
 $commonPath = Join-Path $scriptDir "lib\Common.ps1"
 $errorLogPath = Join-Path $scriptDir "lib\ErrorLog.ps1"
