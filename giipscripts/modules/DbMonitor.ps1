@@ -396,11 +396,12 @@ if ($statsList.Count -gt 0) {
                     sendErrorLog -Config $Config `
                         -Message "[DbMonitor] MdbStatsUpdate API failed - last_check_dt not updated" `
                         -Data @{
-                        api           = "MdbStatsUpdate"
-                        dbCount       = $statsList.Count
-                        RstVal        = $response.RstVal
-                        RstMsg        = $response.RstMsg
-                        payloadLength = $jsonPayload.Length
+                        api            = "MdbStatsUpdate"
+                        dbCount        = $statsList.Count
+                        RstVal         = "$($response.RstVal)"
+                        RstMsg         = "$($response.RstMsg)"
+                        payloadPreview = if ($jsonPayload.Length -gt 1000) { $jsonPayload.Substring(0, 1000) } else { $jsonPayload }
+                        fullResponse   = $response | ConvertTo-Json -Depth 5 -Compress -ErrorAction SilentlyContinue
                     } `
                         -Severity "error" `
                         -ErrorType "MdbStatsUpdateFailed"
@@ -408,6 +409,26 @@ if ($statsList.Count -gt 0) {
             }
             catch {
                 Write-GiipLog "WARN" "[DbMonitor] Failed to log error: $_"
+            }
+
+            # [DEBUG] 로컬 파일 로깅 (DB 로깅 실패 대비)
+            try {
+                $logDir = Join-Path $PSScriptRoot "..\..\logs"
+                if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+                $debugFile = Join-Path $logDir "dbmonitor_debug.json"
+                
+                $debugInfo = @{
+                    Timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+                    RstVal    = "$($response.RstVal)"
+                    RstMsg    = "$($response.RstMsg)"
+                    Payload   = $jsonPayload
+                    FullRes   = $response
+                }
+                $debugInfo | ConvertTo-Json -Depth 5 | Out-File $debugFile -Encoding UTF8 -Force
+                Write-GiipLog "INFO" "[DbMonitor] Debug data saved to $debugFile"
+            }
+            catch {
+                Write-GiipLog "WARN" "[DbMonitor] Failed to save local debug file: $_"
             }
         }
     }
