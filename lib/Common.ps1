@@ -202,6 +202,18 @@ function Invoke-GiipApiV2 {
                 }
             }
             
+            # ========== FIX: giipApiSk2 응답 구조 자동 언래핑 ==========
+            # giipApiSk2는 { "data": [{RstVal, RstMsg}], "debug": {...} } 형식으로 응답
+            # 하지만 호출자는 { RstVal, RstMsg } 직접 접근을 기대함
+            # → data[0]을 자동으로 추출하여 반환
+            if ($response.data -and $response.data -is [Array] -and $response.data.Count -gt 0) {
+                Write-Host "[DEBUG] 🔧 Unwrapping giipApiSk2 response structure (data[0])" -ForegroundColor Yellow
+                $unwrapped = $response.data[0]
+                Write-Host "[DEBUG] Unwrapped RstVal: $($unwrapped.RstVal)" -ForegroundColor Cyan
+                Write-Host "[DEBUG] Unwrapped RstMsg: $($unwrapped.RstMsg)" -ForegroundColor Cyan
+                return $unwrapped
+            }
+            
             return $response
         }
         catch {
