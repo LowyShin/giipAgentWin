@@ -102,9 +102,9 @@ if ($statsList.Count -gt 0) {
         $mdb_id = $stat.mdb_id
         
         try {
-            # 🔧 Fixed: Simplified CommandText to avoid SQL type conversion errors
-            # The API gateway will pass $statJson to @jsondata in pApiMdbStatsUpdatebySk
-            $cmdText = "MdbStatsUpdate"
+            # 🔧 Restored to Standard: Placeholders in text for the gateway to replace from JsonData
+            # This follows the 'Correct Approach' in PROHIBITED_ACTION_2_RUN_PS1.md
+            $cmdText = "MdbStatsUpdate mdb_id uptime threads qps buffer_pool cpu memory"
             $statJson = $stat | ConvertTo-Json -Compress
             
             $response = Invoke-GiipApiV2 -Config $Config -CommandText $cmdText -JsonData $statJson
