@@ -84,11 +84,18 @@ function sendErrorLog {
             }
         }
         
+        # [V] 로그 레벨 필터링: error 또는 critical인 경우에만 실제 API 호출 수행
+        # 디버그성 내용이 DB 에러로그 테이블을 오염시키는 것을 방지합니다.
+        if ($Severity -notin @('error', 'critical')) {
+            Write-GiipLog "INFO" "Logging skipped for severity '$Severity' (Local only): $Message"
+            return "skipped"
+        }
+
         # API 호출
         $logJson = $payload | ConvertTo-Json -Depth 5 -Compress
-        # [V] API 호출 (CommandText 단순화로 SQL 타입 충돌 방지)
+        # [V] API 호출 (giipapi_rules.md L27 표준 준수)
         $response = Invoke-GiipApiV2 -Config $Config `
-            -CommandText "ErrorLogCreate" `
+            -CommandText "ErrorLogCreate source errorMessage" `
             -JsonData $logJson
         
         # 응답 검증

@@ -143,27 +143,10 @@ function Send-ConnectionData {
     
     $response = Invoke-GiipKvsPut -Config $Config -Type "database" -Key "$MdbId" -Factor "db_connections" -Value $ConnList
     
-    # ========== DEBUG: 응답 검증 ==========
+    # ========== DEBUG: 응답 검증 (서버 전송 생략, 로컬 출력만 유지) ==========
     if ($null -eq $response) {
         Write-GiipLog "ERROR" "[DbConnectionList] ❌ API returned NULL for DB $MdbId"
         Write-Host "[DbConnectionList] Response is NULL!" -ForegroundColor Red
-        
-        # 에러로그 DB에 기록
-        try {
-            sendErrorLog -Config $Config `
-                -Message "[DbConnectionList] API returned NULL response for DB $MdbId" `
-                -Data @{
-                mdbId         = $MdbId
-                api           = "KVSPut"
-                connListCount = $ConnList.Count
-            } `
-                -Severity "error" `
-                -ErrorType "ApiNullResponse"
-        }
-        catch {
-            Write-GiipLog "WARN" "[DbConnectionList] Failed to log error: $_"
-        }
-        
         return $false
     }
     
@@ -175,26 +158,9 @@ function Send-ConnectionData {
         Write-Host "[DbConnectionList] RstVal: '$($response.RstVal)'" -ForegroundColor Cyan
         Write-Host "[DbConnectionList] RstMsg: '$($response.RstMsg)'" -ForegroundColor Cyan
         
-        # RstVal이 비어있거나 NULL인 경우 에러로그에 기록 (구조 불일치)
+        # RstVal이 비어있거나 NULL인 경우 로컬 로그만 기록 (구조 비일치)
         if ([string]::IsNullOrWhiteSpace($response.RstVal)) {
-            Write-GiipLog "ERROR" "[DbConnectionList] ⚠️ Response structure mismatch: RstVal is empty"
-            
-            try {
-                sendErrorLog -Config $Config `
-                    -Message "[DbConnectionList] API response structure mismatch - RstVal is empty" `
-                    -Data @{
-                    mdbId              = $MdbId
-                    api                = "KVSPut"
-                    responseType       = $response.GetType().Name
-                    responseProperties = ($props -join ", ")
-                    note               = "This indicates giipApiSk2 wrapped response in {data:[]} structure"
-                } `
-                    -Severity "warn" `
-                    -ErrorType "ResponseStructureMismatch"
-            }
-            catch {
-                Write-GiipLog "WARN" "[DbConnectionList] Failed to log structure mismatch:  $_"
-            }
+            Write-GiipLog "WARN" "[DbConnectionList] ⚠️ Response structure mismatch: RstVal is empty (Wrapped by DB Gateway?)"
         }
     }
     elseif ($response -is [Hashtable]) {
