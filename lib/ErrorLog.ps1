@@ -86,9 +86,9 @@ function sendErrorLog {
         
         # API 호출
         $logJson = $payload | ConvertTo-Json -Depth 5 -Compress
-        
+        # [V] API 호출 (CommandText 단순화로 SQL 타입 충돌 방지)
         $response = Invoke-GiipApiV2 -Config $Config `
-            -CommandText "ErrorLogCreate source errorMessage" `
+            -CommandText "ErrorLogCreate" `
             -JsonData $logJson
         
         # 응답 검증
