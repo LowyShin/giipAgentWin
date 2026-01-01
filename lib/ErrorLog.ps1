@@ -38,6 +38,16 @@ function sendErrorLog {
         
         if ($null -ne $Data) {
             try {
+                # [V] Exception 객체인 경우 상세 정보 추출
+                if ($Data -is [System.Exception]) {
+                    $Data = @{
+                        Message        = $Data.Message
+                        StackTrace     = $Data.StackTrace
+                        Type           = $Data.GetType().FullName
+                        InnerException = if ($Data.InnerException) { $Data.InnerException.Message } else { $null }
+                    }
+                }
+
                 # Step 1: ConvertTo-Json 시도
                 $jsonData = $Data | ConvertTo-Json -Depth 10 -Compress
                 
