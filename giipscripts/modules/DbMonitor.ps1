@@ -102,9 +102,9 @@ if ($statsList.Count -gt 0) {
         $mdb_id = $stat.mdb_id
         
         try {
-            # 🔧 Refactored: Send as individual parameters via standard Invoke-GiipApiV2
-            # The text field lists parameters for the gateway to map from JsonData
-            $cmdText = "MdbStatsUpdate mdb_id uptime threads qps buffer_pool cpu memory"
+            # 🔧 Fixed: Simplified CommandText to avoid SQL type conversion errors
+            # The API gateway will pass $statJson to @jsondata in pApiMdbStatsUpdatebySk
+            $cmdText = "MdbStatsUpdate"
             $statJson = $stat | ConvertTo-Json -Compress
             
             $response = Invoke-GiipApiV2 -Config $Config -CommandText $cmdText -JsonData $statJson
