@@ -68,35 +68,47 @@ function Write-GiipLog {
 # REAL config location: Parent directory or %USERPROFILE%
 # ============================================================================
 function Get-GiipConfig {
-    # Priority: 1. Parent Dir (../giipAgent.cfg) - Real Config
-    #           2. User Profile
-    #           3. Current Directory (fallback)
-    # ⚠️ IMPORTANT: Do NOT search in $BaseDir itself - that's where the SAMPLE file is!
+    # Priority: 1. Workspace Root (../../giipAgent.cfg)
+    #           2. Parent Dir (../giipAgent.cfg)
+    #           3. User Profile
+    #           4. Current Directory (fallback, but WILL BE FILTERED if it's a sample)
     
     $candidates = @()
+    # Workspace Root (if BaseDir is set to giipAgentWin)
     if ($Global:BaseDir) {
-        # ✅ Search PARENT directory first (real config location)
         $candidates += (Join-Path $Global:BaseDir "../giipAgent.cfg")
-    }
-    # Current Directory of script (parent of lib/)
-    if ($PSScriptRoot) {
-        $candidates += (Join-Path $PSScriptRoot "../giipAgent.cfg")
     }
     # User Profile
     $candidates += (Join-Path $env:USERPROFILE "giipAgent.cfg")
-    # Current working directory (fallback)
+    # Current script directory (subfolders)
+    if ($PSScriptRoot) {
+        $candidates += (Join-Path $PSScriptRoot "../giipAgent.cfg")
+        $candidates += (Join-Path $PSScriptRoot "giipAgent.cfg")
+    }
+    # Current working directory
     $candidates += (Join-Path (Get-Location) "giipAgent.cfg")
 
     foreach ($path in $candidates) {
         if (Test-Path $path) {
-            # Try to resolve to absolute path for clarity
-            $fullPath = Resolve-Path $path
-            Write-GiipLog 'INFO' ('Loading config from: ' + $fullPath)
-            return (Parse-ConfigFile -Path $path)
+            try {
+                $config = Parse-ConfigFile -Path $path
+                # ⚠️ CRITICAL: Ignore SAMPLE files
+                if ($config.lssn -eq "YOUR_LSSN" -or $config.sk -eq "YOUR_KVS_TOKEN") {
+                    Write-GiipLog 'WARN' ("Skipping SAMPLE config file at: $path")
+                    continue
+                }
+                
+                $fullPath = Resolve-Path $path
+                Write-GiipLog 'INFO' ('✅ Valid config loaded from: ' + $fullPath)
+                return $config
+            }
+            catch {
+                Write-GiipLog 'WARN' ("Failed to parse config at $path : $_")
+            }
         }
     }
     
-    throw "giipAgent.cfg not found in search paths."
+    throw "Valid giipAgent.cfg not found. Please ensure a real config (not a sample) exists in the parent directory or user profile."
 }
 
 function Parse-ConfigFile {
