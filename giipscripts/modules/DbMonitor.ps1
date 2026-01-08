@@ -129,9 +129,36 @@ if ($statsList.Count -gt 0) {
     
     # Save stats to local file for reference
     $statsList | ConvertTo-Json -Depth 5 | Set-Content -Path $DbStatsFile -Encoding UTF8
+
+    # 🚀 Report to Agent Work Explorer
+    try {
+        . (Join-Path $LibDir "KVS.ps1")
+        $workResult = @{
+            status    = "success"
+            message   = "Collected metrics for $($statsList.Count) databases."
+            exit_code = 0
+            timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        }
+        Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "db_monitor_check" -Value $workResult | Out-Null
+    }
+    catch {
+        Write-GiipLog "WARN" "[DbMonitor] Failed to report to KVS: $_"
+    }
 }
 else {
     Write-GiipLog "WARN" "[DbMonitor] No metrics collected (Count=0)"
+    
+    # Report failure/warning to KVS
+    try {
+        . (Join-Path $LibDir "KVS.ps1")
+        $workResult = @{
+            status    = "warning"
+            message   = "No active databases found to monitor."
+            exit_code = 0
+        }
+        Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "db_monitor_check" -Value $workResult | Out-Null
+    }
+    catch {}
 }
 
 exit 0

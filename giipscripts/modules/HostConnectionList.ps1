@@ -80,9 +80,17 @@ try {
         Write-GiipLog "INFO" "[HostConnectionList] Found $($report.Count) active connections."
         
         # Send to API (KVS)
-        # kType = 'lssn', kKey = LSSN, kFactor = 'netstat'
-        # NOTE: Backend expects 'lssn' for server-related data, 'server' will be rejected (404) by pApiKVSPutbySk
         $response = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "netstat" -Value $report
+
+        # 🚀 Report status to Agent Work Explorer
+        $workStatus = if ($response.RstVal -eq "200") { "success" } else { "fail" }
+        $workMsg = if ($response.RstVal -eq "200") { "Uploaded $($report.Count) connections." } else { "Upload failed: $($response.RstMsg)" }
+        
+        Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "host_connection_check" -Value @{
+            status    = $workStatus
+            message   = $workMsg
+            exit_code = if ($response.RstVal -eq "200") { 0 } else { 1 }
+        } | Out-Null
 
         if ($response.RstVal -eq "200") {
             Write-GiipLog "INFO" "[HostConnectionList] Success. Uploaded netstat data."
@@ -93,11 +101,27 @@ try {
     }
     else {
         Write-GiipLog "INFO" "[HostConnectionList] No active external connections to report."
+        
+        # Report "success" but empty to KVS
+        Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "host_connection_check" -Value @{
+            status    = "success"
+            message   = "No active external connections found."
+            exit_code = 0
+        } | Out-Null
     }
 
 }
 catch {
     Write-GiipLog "ERROR" "[HostConnectionList] Unexpected error: $_"
+    # Report failure to KVS
+    try {
+        Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "host_connection_check" -Value @{
+            status    = "fail"
+            message   = "Exception: $_"
+            exit_code = 1
+        } | Out-Null
+    }
+    catch {}
 }
 
 Write-GiipLog "INFO" "[HostConnectionList] Completed."
