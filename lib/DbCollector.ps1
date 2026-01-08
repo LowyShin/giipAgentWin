@@ -81,7 +81,7 @@ function Get-GiipDbMetrics {
                     sendErrorLog -Config $Config `
                         -Message "[DbCollector] MSSQL Error for DB ${mdb_id}: $($_.Exception.Message)" `
                         -Data $errData `
-                        -Severity "warn" `
+                        -Severity "error" `
                         -ErrorType "DbCollectionError"
                 }
             }
@@ -104,7 +104,6 @@ function Get-GiipDbMetrics {
                 $cmd.CommandText = "SHOW GLOBAL STATUS WHERE Variable_name IN ('Threads_connected', 'Questions', 'Innodb_buffer_pool_pages_total', 'Innodb_buffer_pool_pages_free', 'Uptime')"
                 $reader = $cmd.ExecuteReader()
                 
-                $questions = 0
                 while ($reader.Read()) {
                     $name = $reader["Variable_name"]
                     $val = $reader["Value"]
