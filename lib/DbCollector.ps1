@@ -82,7 +82,7 @@ function Get-GiipDbMetrics {
                         -Message "[DbCollector] MSSQL Error for DB ${mdb_id}: $($_.Exception.Message)" `
                         -Data $errData `
                         -Severity "error" `
-                        -ErrorType "DbCollectionError"
+                        -ErrorType "DbCollectionError" | Out-Null
                 }
             }
             catch {}
