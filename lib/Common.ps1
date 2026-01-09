@@ -278,12 +278,22 @@ function Invoke-GiipApiV2 {
                 }
             }
             
+            
             if ($response.data -and $response.data -is [Array] -and $response.data.Count -gt 0) {
-                Write-Host "[DEBUG] 🔧 Unwrapping giipApiSk2 response structure (data[0])" -ForegroundColor Yellow
-                $unwrapped = $response.data[0]
-                Write-Host "[DEBUG] Unwrapped RstVal: $($unwrapped.RstVal)" -ForegroundColor Cyan
-                Write-Host "[DEBUG] Unwrapped RstMsg: $($unwrapped.RstMsg)" -ForegroundColor Cyan
-                return $unwrapped
+                # Check if this is a single-record response (has RstVal in data[0])
+                # or a multi-record list response
+                if ($response.data[0].RstVal) {
+                    Write-Host "[DEBUG] 🔧 Unwrapping giipApiSk2 response structure (data[0])" -ForegroundColor Yellow
+                    $unwrapped = $response.data[0]
+                    Write-Host "[DEBUG] Unwrapped RstVal: $($unwrapped.RstVal)" -ForegroundColor Cyan
+                    Write-Host "[DEBUG] Unwrapped RstMsg: $($unwrapped.RstMsg)" -ForegroundColor Cyan
+                    return $unwrapped
+                }
+                else {
+                    Write-Host "[DEBUG] 🔧 Returning full data array (list response)" -ForegroundColor Yellow
+                    Write-Host "[DEBUG] Array Count: $($response.data.Count)" -ForegroundColor Cyan
+                    return @{ data = $response.data }
+                }
             }
             
             return $response
