@@ -280,9 +280,9 @@ function Invoke-GiipApiV2 {
             
             
             if ($response.data -and $response.data -is [Array] -and $response.data.Count -gt 0) {
-                # Check if this is a single-record response (has RstVal in data[0])
+                # Check if this is a single-record SP response (has Proc_MSG in data[0])
                 # or a multi-record list response
-                if ($response.data[0].RstVal) {
+                if ($response.data[0].Proc_MSG) {
                     Write-Host "[DEBUG] 🔧 Unwrapping giipApiSk2 response structure (data[0])" -ForegroundColor Yellow
                     $unwrapped = $response.data[0]
                     Write-Host "[DEBUG] Unwrapped RstVal: $($unwrapped.RstVal)" -ForegroundColor Cyan
