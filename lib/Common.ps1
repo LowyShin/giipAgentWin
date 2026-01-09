@@ -289,6 +289,12 @@ function Invoke-GiipApiV2 {
                     Write-Host "[DEBUG] Unwrapped RstMsg: $($unwrapped.RstMsg)" -ForegroundColor Cyan
                     return $unwrapped
                 }
+                # If single-item array with RstVal (SP response), auto-unwrap for compatibility
+                elseif ($response.data.Count -eq 1 -and $response.data[0].RstVal) {
+                    Write-Host "[DEBUG] 🔧 Auto-unwrapping single SP response (data[0])" -ForegroundColor Yellow
+                    return $response.data[0]
+                }
+                # Multi-record list
                 else {
                     Write-Host "[DEBUG] 🔧 Returning full data array (list response)" -ForegroundColor Yellow
                     Write-Host "[DEBUG] Array Count: $($response.data.Count)" -ForegroundColor Cyan
