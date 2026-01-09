@@ -1,6 +1,6 @@
 # ============================================================================
 # CleanState.ps1
-# Purpose: Delete previous state files (JSON) to ensure a clean start.
+# Purpose: Delete previous state files (JSON) and old log files to ensure a clean start.
 # Usage: .\CleanState.ps1
 # ============================================================================
 
@@ -30,6 +30,25 @@ foreach ($file in $targets) {
         catch {
             Write-Host "  Failed to delete: $file ($($_.Exception.Message))" -ForegroundColor Red
         }
+    }
+}
+
+# Clean old log files (keep last 7 days)
+$LogDir = Join-Path $AgentRoot "giipLogs"
+if (Test-Path $LogDir) {
+    Write-Host "Cleaning old log files (keeping last 7 days)..."
+    $cutoffDate = (Get-Date).AddDays(-7)
+    
+    try {
+        Get-ChildItem -Path $LogDir -Filter "*.log" | Where-Object {
+            $_.LastWriteTime -lt $cutoffDate
+        } | ForEach-Object {
+            Remove-Item $_.FullName -Force
+            Write-Host "  Deleted old log: $($_.Name)" -ForegroundColor Yellow
+        }
+    }
+    catch {
+        Write-Host "  Warning: Failed to clean some log files ($($_.Exception.Message))" -ForegroundColor Yellow
     }
 }
 

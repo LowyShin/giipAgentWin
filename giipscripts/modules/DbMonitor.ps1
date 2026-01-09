@@ -73,6 +73,17 @@ try {
     }
 
     Write-GiipLog "INFO" "[DbMonitor] Found $($dbList.Count) databases to monitor."
+    
+    # Save DB list to JSON file for debugging/monitoring
+    try {
+        $dbListFile = Join-Path $DataDir "db_list_cache.json"
+        $dbList | ConvertTo-Json -Depth 10 | Out-File -FilePath $dbListFile -Encoding UTF8 -Force
+        Write-GiipLog "INFO" "[DbMonitor] DB list saved to: $dbListFile"
+    }
+    catch {
+        Write-GiipLog "WARN" "[DbMonitor] Failed to save DB list to file: $_"
+    }
+
 }
 catch {
     Write-GiipLog "ERROR" "[DbMonitor] Failed to get DB list: $_"
