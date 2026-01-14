@@ -36,12 +36,11 @@ Write-GiipLog "INFO" "[CqeGet] Starting... LSSN=$($Config.lssn)"
 # Prepare generic Windows info
 $hostname = [System.Net.Dns]::GetHostName()
 try {
-    $osInfo = Get-CimInstance Win32_OperatingSystem
-    $osName = $osInfo.Caption -replace "Microsoft\s*", "" -replace "Windows", "windows" -replace "\s+", " "
-    $os = $osName.Trim().ToLower()
+    # [FIX] WMI Hang issue discovered 2026-01-14. Replaced with .NET Environment call.
+    $os = "windows " + [System.Environment]::OSVersion.Version.ToString()
 }
 catch {
-    $os = "windows (unknown)"
+    $os = "windows (fallback)"
 } 
 
 # Prepare API Call
