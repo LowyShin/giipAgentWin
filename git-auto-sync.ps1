@@ -87,13 +87,23 @@ if ([string]::IsNullOrWhiteSpace($gitUserName) -or [string]::IsNullOrWhiteSpace(
 }
 
 # ============================================================
-# 현재 브랜치 확인
+# 현재 브랜치 확인 및 전환 (Force 'real')
 # ============================================================
+$targetBranch = "real"
 $currentBranch = git rev-parse --abbrev-ref HEAD 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Log "ERROR: Failed to get current branch"
-    exit 1
+
+if ($currentBranch -ne $targetBranch) {
+    Write-Log "Current branch is '$currentBranch'. Switching to '$targetBranch'..."
+    git fetch origin $targetBranch 2>&1 | ForEach-Object { Write-Log "  $_" }
+    git checkout $targetBranch 2>&1 | ForEach-Object { Write-Log "  $_" }
+    
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "ERROR: Failed to checkout '$targetBranch'. Please check manually."
+        exit 1
+    }
+    $currentBranch = $targetBranch
 }
+
 Write-Log "Current branch: $currentBranch"
 
 # ============================================================
@@ -135,11 +145,13 @@ if ($changedFiles) {
         Write-Log "✓ Local changes stashed successfully"
         Write-Log "To recover: git stash list && git stash pop"
         $stashed = $true
-    } else {
+    }
+    else {
         Write-Log "ERROR: Failed to stash local changes"
         exit 1
     }
-} else {
+}
+else {
     Write-Log "✓ No local changes detected"
     $stashed = $false
 }
@@ -171,7 +183,8 @@ if ($localHash -ne $remoteHash) {
         # Show what changed
         Write-Log "Changes pulled:"
         git log --oneline "$localHash..$newHash" 2>&1 | ForEach-Object { Write-Log "  $_" }
-    } else {
+    }
+    else {
         Write-Log "ERROR: Pull failed"
         
         # Restore stashed changes if any
@@ -181,7 +194,8 @@ if ($localHash -ne $remoteHash) {
         }
         exit 1
     }
-} else {
+}
+else {
     Write-Log "✓ Already up to date with remote"
 }
 
@@ -224,7 +238,8 @@ Write-Log "  Message: $(git log -1 --format='%s')"
 if ($stashed) {
     $stashCount = (git stash list | Measure-Object).Count
     Write-Log "  Stashed: YES ($stashCount items)"
-} else {
+}
+else {
     Write-Log "  Stashed: NO"
 }
 
