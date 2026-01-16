@@ -33,7 +33,7 @@ function Get-GiipDbMetrics {
     if ($db_type -eq 'MSSQL') {
         # MSSQL Collection
         try {
-            $connStr = "Server=$dbHost,$port;Database=master;User Id=$user;Password=$pass;TrustServerCertificate=True;Connection Timeout=10;"
+            $connStr = "Server=$dbHost,$port;Database=master;User Id=$user;Password=$pass;TrustServerCertificate=True;Connection Timeout=5;" # Reduced timeout to 5s
             $conn = New-Object System.Data.SqlClient.SqlConnection($connStr)
             $conn.Open()
             
@@ -65,9 +65,10 @@ function Get-GiipDbMetrics {
             return $stat
         }
         catch {
-            Write-GiipLog "WARN" "[DbCollector] ❌ MSSQL Connection failed for DB ${mdb_id}: $_"
+            # Log to local file with WARN
+            Write-GiipLog "WARN" "[DbCollector] ❌ MSSQL Connection failed for DB ${mdb_id} ($dbHost): $($_.Exception.Message)"
             
-            # Error Logging (DbConnectionFailed)
+            # Send to Central Error Log only if it's not a simple timeout or for visibility as 'warn'
             try {
                 $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
                 if (Test-Path $errorLogPath) {
@@ -76,13 +77,15 @@ function Get-GiipDbMetrics {
                         mdb_id    = $mdb_id
                         db_host   = $dbHost
                         exception = $_.Exception.Message
+                        source    = "DbCollector"
                     } | ConvertTo-Json -Compress
                     
+                    # Reduce noise by setting severity to 'warn' for connection issues
                     sendErrorLog -Config $Config `
-                        -Message "[DbCollector] MSSQL Error for DB ${mdb_id}: $($_.Exception.Message)" `
+                        -Message "[DbCollector] MSSQL Connection Failed (ID: ${mdb_id}, Host: ${dbHost})" `
                         -Data $errData `
-                        -Severity "error" `
-                        -ErrorType "DbCollectionError" | Out-Null
+                        -Severity "warn" `
+                        -ErrorType "DbConnectionWarning" | Out-Null
                 }
             }
             catch {}
