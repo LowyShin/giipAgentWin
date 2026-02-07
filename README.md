@@ -114,6 +114,7 @@ Get-ScheduledTask -TaskName "GIIP*"
 - `.\gitsync.ps1` - Git 수동 동기화
 
 ### 🔗 관련 프로젝트
+- [GIIP Dev Agent (Multi-Agent Framework)](https://github.com/LowyShin/giip-dev-agent) - 🤖 자율 멀티 에이전트 프레임워크 (신규!)
 - [GIIP Agent Linux](../giipAgentLinux/README.md) - Linux/Unix 에이전트
 - [GIIP FAW (API)](../giipfaw/README.md) - API 서버
 - [GIIP DB](../giipdb/README.md) - 데이터베이스
