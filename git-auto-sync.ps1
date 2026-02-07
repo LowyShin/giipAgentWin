@@ -87,9 +87,35 @@ if ([string]::IsNullOrWhiteSpace($gitUserName) -or [string]::IsNullOrWhiteSpace(
 }
 
 # ============================================================
-# 현재 브랜치 확인 및 전환 (Force 'real')
+# 현재 브랜치 확인 및 전환 (giipAgent.cfg에서 읽기)
 # ============================================================
+# Default branch
 $targetBranch = "real"
+
+# Try to read branch from config file
+$configPaths = @(
+    (Join-Path (Split-Path $RepoPath -Parent) "giipAgent.cfg"),
+    (Join-Path $env:USERPROFILE "giipAgent.cfg"),
+    (Join-Path $RepoPath "giipAgent.cfg")
+)
+
+foreach ($configPath in $configPaths) {
+    if (Test-Path $configPath) {
+        Write-Log "Found config file: $configPath"
+        $configContent = Get-Content $configPath -ErrorAction SilentlyContinue
+        $branchLine = $configContent | Where-Object { $_ -match '^\s*branch\s*=' }
+        if ($branchLine) {
+            $configBranch = ($branchLine -split '=')[1].Trim().Trim('"')
+            if ($configBranch) {
+                $targetBranch = $configBranch
+                Write-Log "Using branch from config: $targetBranch"
+                break
+            }
+        }
+    }
+}
+
+Write-Log "Target branch: $targetBranch"
 $currentBranch = git rev-parse --abbrev-ref HEAD 2>$null
 
 if ($currentBranch -ne $targetBranch) {
