@@ -114,75 +114,99 @@ try {
                             user_list = $userList
                         } | ConvertTo-Json -Depth 5 -Compress
 
-                        # Debug: Log payload before sending
-                        Send-GiipDebugLog -Config $Config -Message "[DbUserList] Sending user_list for mdb_id=$mdb_id, host=$dbHost" -RequestData $ulPayload -Severity "debug"
-
-                        # Handle API Response (SP might return direct JSON or wrapped JSON string)
-                        $res = Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata" -JsonData $ulPayload
-                        
-                        $rstVal = $res.RstVal
-                        $rstMsg = $res.RstMsg
-
-                        # Handle "data: [{JSON_...: '{...}'}]" format
-                        if (-not $rstVal -and $res.data) {
-                            try {
-                                # Extract first item's first property value (the JSON string)
-                                $innerJson = $res.data[0].PSObject.Properties | Select-Object -First 1 -ExpandProperty Value
-                                $innerObj = $innerJson | ConvertFrom-Json
-                                $rstVal = $innerObj.RstVal
-                                $rstMsg = $innerObj.RstMsg
-                            }
-                            catch {
-                                Write-GiipLog "WARN" "[DbUserList] Failed to parse inner JSON response"
-                            }
-                        }
-
-                        if ($rstVal -eq 200) {
-                            Write-GiipLog "INFO" ("[DbUserList] Data uploaded for {0} (Success)" -f $dbHost)
-                        }
-                        else {
-                            $msg = if ($rstMsg) { $rstMsg } else { "Unknown Error" }
-                            Write-GiipLog "ERROR" ("[DbUserList] Upload failed for {0}: {1}" -f $dbHost, $msg)
-                            
-                            # Log to Central DB (ErrorLogCreate)
-                            try {
-                                $errJson = @{
-                                    source       = "giipAgent"
-                                    errorMessage = "[DbUserList] Upload failed: $msg"
-                                    apiEndpoint  = "Net3dUserListPut"
-                                    requestData  = $ulPayload
-                                    lssn         = $Config.lssn
-                                    severity     = "error"
-                                } | ConvertTo-Json -Compress -Depth 5
-                                
-                                Invoke-GiipApiV2 -Config $Config -CommandText "ErrorLogCreate source errorMessage" -JsonData $errJson | Out-Null
-                                Write-GiipLog "INFO" "[DbUserList] Sent error report to central DB."
-                            }
-                            catch {
-                                Write-GiipLog "WARN" "[DbUserList] Failed to send error report: $($_.Exception.Message)"
-                            }
-
-                            # Log the payload locally for debugging
-                            Write-GiipLog "ERROR" ("Failed Payload: {0}" -f $ulPayload)
-
-                            if ($res) {
-                                $resJson = $res | ConvertTo-Json -Compress
-                                Write-GiipLog "DEBUG" ("Response: {0}" -f $resJson)
-                            }
-                        }
-                    }
-                    else {
-                        Write-GiipLog "WARN" ("[DbUserList] No users found for {0}" -f $dbHost)
+                        Write-GiipLog "INFO" ("[DbUserList] Sending user_list for mdb_id=$mdb_id, host=$dbHost (MSSQL)")
+                        Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata" -JsonData $ulPayload | Out-Null
+                        Write-GiipLog "INFO" ("[DbUserList] Data uploaded for {0} (Success)" -f $dbHost)
                     }
                 }
                 catch {
-                    Write-GiipLog 'ERROR' ('[DbUserList] Failed to collect/upload for ' + $dbHost + ': ' + $_.Exception.Message)
+                    Write-GiipLog 'ERROR' ('[DbUserList] Failed to collect/upload for ' + $dbHost + ' (MSSQL): ' + $_.Exception.Message)
+                }
+            }
+            elseif ($db.db_type -match 'MySQL|MariaDB') {
+                try {
+                    # Try to find MySql.Data.dll
+                    $dllPaths = @(
+                        Join-Path $LibDir "MySql.Data.dll",
+                        "C:\Program Files\MySQL\MySQL Connector Net 8.0.33\Assemblies\v4\MySql.Data.dll",
+                        "C:\Program Files\MySQL\MySQL Connector Net 8.0.32\Assemblies\v4\MySql.Data.dll"
+                    )
+                    
+                    $loaded = $false
+                    foreach ($path in $dllPaths) {
+                        if (Test-Path $path) {
+                            [void][System.Reflection.Assembly]::LoadFrom($path)
+                            $loaded = $true
+                            break
+                        }
+                    }
+
+                    if (-not $loaded) {
+                        throw "MySql.Data.dll not found in any of the search paths."
+                    }
+
+                    $connStr = "Server=$dbHost;Port=$port;Uid=$user;Pwd=$pass;SslMode=None;Connection Timeout=10;"
+                    $userConn = New-Object MySql.Data.MySqlClient.MySqlConnection($connStr)
+                    $userConn.Open()
+                    
+                    $userCmd = $userConn.CreateCommand()
+                    $userCmd.CommandText = @"
+SELECT 
+    User as name,
+    'USER' as type,
+    CASE 
+        WHEN (password_expired IS NULL OR password_expired = 'N')
+        THEN 'ENABLED'
+        ELSE 'DISABLED'
+    END as status,
+    COALESCE(
+        (SELECT GROUP_CONCAT(DISTINCT db SEPARATOR ',')
+         FROM mysql.db d
+         WHERE d.User = u.User AND d.Host = u.Host),
+        ''
+    ) as grants,
+    '' as roles
+FROM mysql.user u
+WHERE User != ''
+GROUP BY User, Host, plugin, password_expired
+ORDER BY User;
+"@
+                    $userReader = $userCmd.ExecuteReader()
+                    $userList = @()
+                    while ($userReader.Read()) {
+                        $userList += @{
+                            name   = $userReader["name"]
+                            type   = $userReader["type"]
+                            status = $userReader["status"]
+                            grants = $userReader["grants"]
+                            roles  = $userReader["roles"]
+                        }
+                    }
+                    $userReader.Close()
+                    $userConn.Close()
+
+                    if ($userList.Count -gt 0) {
+                        # Upload to Net3dUserListPut
+                        $ulPayload = @{
+                            mdb_id    = $mdb_id
+                            lssn      = $Config.lssn
+                            user_list = $userList
+                        } | ConvertTo-Json -Depth 5 -Compress
+
+                        Write-GiipLog "INFO" ("[DbUserList] Sending user_list for mdb_id=$mdb_id, host=$dbHost (MySQL)")
+                        Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata" -JsonData $ulPayload | Out-Null
+                        Write-GiipLog "INFO" ("[DbUserList] Data uploaded for {0} (Success)" -f $dbHost)
+                    }
+                }
+                catch {
+                    Write-GiipLog 'ERROR' ('[DbUserList] Failed to collect/upload for ' + $dbHost + ' (MySQL): ' + $_.Exception.Message)
                 }
             }
             else {
                 $dbType = $db.db_type
                 Write-GiipLog 'WARN' ('[DbUserList] DB Type ' + $dbType + ' not supported for User List yet.')
             }
+
         }
     }
 
