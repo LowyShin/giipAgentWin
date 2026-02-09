@@ -12,7 +12,6 @@ $LibDir = Join-Path $AgentRoot "lib"
 # Load Libraries
 try {
     . (Join-Path $LibDir "Common.ps1")
-    . (Join-Path $LibDir "DebugLog.ps1")
 }
 catch {
     Write-Host "FATAL: Failed to load libraries from $LibDir"
