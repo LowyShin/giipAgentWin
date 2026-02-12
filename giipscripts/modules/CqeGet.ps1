@@ -94,9 +94,13 @@ try {
     # Queue Found! Save to JSON
     Write-GiipLog "INFO" "[CqeGet] Task received! Saving to $QueueFile"
     
-    # Save only the script content or full object? User requested data exchange via JSON.
-    # We save the full task object.
+    # Save the full task object.
     $data | ConvertTo-Json -Depth 5 | Set-Content -Path $QueueFile -Encoding UTF8
+    
+    # Also save script type for easier access if needed by orchestrator
+    if ($data.script_type) {
+        $data.script_type | Set-Content -Path "$QueueFile.type" -Encoding UTF8
+    }
     
     Write-GiipLog "INFO" "[CqeGet] Success."
 }
