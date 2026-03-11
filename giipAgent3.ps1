@@ -20,6 +20,15 @@ catch {
     Write-Host "Warning: Common lib not loaded. ($_)" 
 }
 
+# 1. Log Cleanup (Maintenance)
+try {
+    . (Join-Path $LibDir "LogCleanup.ps1")
+    Start-LogCleanup -Days 7
+}
+catch {
+    Write-Host "Warning: Log cleanup failed. ($_)"
+}
+
 if (-not (Get-Command "Write-GiipLog" -ErrorAction SilentlyContinue)) {
     function Write-GiipLog { param($Level, $Message) Write-Host "[$Level] $Message" }
 }
