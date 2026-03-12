@@ -34,7 +34,9 @@ Write-GiipLog "INFO" "[HostConnectionList] Starting..."
     # 1. Get TCP Connections (State: Established, Listen)
     # Note: Requires Windows 8 / Server 2012 or later
     # ⚠️ Security Note: Include LISTEN state to detect potential backdoors/threats
-    $connections = Get-NetTCPConnection -State Established, Listen -ErrorAction SilentlyContinue
+    # ⚠️ Performance Note: Limit to 2000 to prevent data bloat
+    $TopConnections = 2000
+    $connections = Get-NetTCPConnection -State Established, Listen -ErrorAction SilentlyContinue | Select-Object -First $TopConnections
 
     if (-not $connections) {
         Write-GiipLog "INFO" "[HostConnectionList] No connections found or Get-NetTCPConnection unavailable."

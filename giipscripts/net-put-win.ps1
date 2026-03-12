@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Windows 서버에서 3D 네트워크 구성 시각화를 위한 정보를 수집하여 JSON으로 저장합니다.
 
@@ -81,7 +81,7 @@ param(
 # @@ANCHOR:USER_CONFIG_START
 # region 사용자 설정: giipAgent.cfg에서 KVSConfig 읽기, kFactor만 이 파일에서 지정
 # ⚠️⚠️⚠️ DO NOT MODIFY THIS PATH ⚠️⚠️⚠️
-$kFactor = 'netstat'
+$kFactor = 'netinv'
 $cfgPath = Join-Path $PSScriptRoot '..\..\giipAgent.cfg'
 if (Test-Path -LiteralPath $cfgPath) {
   $lines = Get-Content -LiteralPath $cfgPath -Raw
