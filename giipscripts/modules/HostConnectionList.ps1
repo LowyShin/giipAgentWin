@@ -31,10 +31,10 @@ catch {
 
 Write-GiipLog "INFO" "[HostConnectionList] Starting..."
 
-try {
-    # 1. Get TCP Connections (State: Established)
+    # 1. Get TCP Connections (State: Established, Listen)
     # Note: Requires Windows 8 / Server 2012 or later
-    $connections = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue
+    # ⚠️ Security Note: Include LISTEN state to detect potential backdoors/threats
+    $connections = Get-NetTCPConnection -State Established, Listen -ErrorAction SilentlyContinue
 
     if (-not $connections) {
         Write-GiipLog "INFO" "[HostConnectionList] No connections found or Get-NetTCPConnection unavailable."
@@ -46,7 +46,8 @@ try {
 
     foreach ($conn in $connections) {
         # Filter Loopback & Generic
-        if ($conn.RemoteAddress -eq "127.0.0.1" -or $conn.RemoteAddress -eq "::1" -or $conn.RemoteAddress -eq "0.0.0.0") { continue }
+        # Keep LISTEN sockets even if RemoteAddress is wildcard (0.0.0.0 or ::)
+        if ($conn.RemoteAddress -eq "127.0.0.1" -or $conn.RemoteAddress -eq "::1") { continue }
         if ($conn.LocalAddress -eq "127.0.0.1" -or $conn.LocalAddress -eq "::1") { continue }
 
         # Resolve Process Name
@@ -64,10 +65,7 @@ try {
             remote_port  = $conn.RemotePort
             pid          = $conn.OwningProcess
             process_name = $procName
-            state        = "ESTABLISHED"
-            # Traffic volume per connection is not easily available via standard cmdlets
-            # user_request: "Check traffic volume if possible". 
-            # Result: Not possible per-connection without elevated perf counters/ETW.
+            state        = $conn.State.ToString().ToUpper()
             traffic      = $null 
         }
     }
