@@ -44,6 +44,50 @@ Write-GiipLog "INFO" "[HostConnectionList] Starting..."
         exit 0
     }
 
+    # ============================================================================
+    # 🔍 [NEW] ENRICHMENT: Local SQL Server Session Check
+    # ============================================================================
+    $SqlSessionMap = @{}
+    $isSqlSvrRunning = Get-Process -Name "sqlservr" -ErrorAction SilentlyContinue
+    if ($isSqlSvrRunning) {
+        Write-GiipLog "DEBUG" "Local SQL Server detected. Attempting to fetch session map for query_hash enrichment."
+        try {
+            # Use LocalHost with Integrated Security
+            $sqlConnStr = "Server=.;Database=master;Integrated Security=True;Connection Timeout=5;"
+            $sqlConn = New-Object System.Data.SqlClient.SqlConnection($sqlConnStr)
+            $sqlConn.Open()
+            
+            $sqlCmd = $sqlConn.CreateCommand()
+            $sqlCmd.CommandText = @"
+                SELECT 
+                    c.client_net_address,
+                    c.client_tcp_port,
+                    CONVERT(NVARCHAR(64), r.query_hash, 1) as query_hash
+                FROM sys.dm_exec_connections c WITH(NOLOCK)
+                JOIN sys.dm_exec_requests r WITH(NOLOCK) ON c.session_id = r.session_id
+                WHERE c.net_transport = 'TCP'
+"@
+            $sqlReader = $sqlCmd.ExecuteReader()
+            while ($sqlReader.Read()) {
+                $cAddr = $sqlReader["client_net_address"].ToString().Trim()
+                $cPort = $sqlReader["client_tcp_port"].ToString()
+                $qHash = $sqlReader["query_hash"].ToString()
+                
+                # Use "address:port" as key for precise matching (IP:Port standard)
+                if ($cAddr -and $cPort) {
+                    $SqlSessionMap["$cAddr:$cPort"] = $qHash
+                }
+            }
+            $sqlReader.Close()
+            $sqlConn.Close()
+            Write-GiipLog "DEBUG" ("Successfully mapped $($SqlSessionMap.Count) active SQL sessions.")
+        }
+        catch {
+            Write-GiipLog "WARN" "Failed to fetch local SQL session map: $($_.Exception.Message)"
+        }
+    }
+    # ============================================================================
+
     $report = @()
 
     foreach ($conn in $connections) {
@@ -60,6 +104,15 @@ Write-GiipLog "INFO" "[HostConnectionList] Starting..."
         }
 
         # Build Object
+        # Determine if this row can be enriched with query_hash
+        $qHash = ""
+        if ($SqlSessionMap.Count -gt 0 -and $conn.LocalPort -eq 1433) {
+            $key = "$($conn.RemoteAddress):$($conn.RemotePort)"
+            if ($SqlSessionMap.ContainsKey($key)) {
+                $qHash = $SqlSessionMap[$key]
+            }
+        }
+
         $report += @{
             local_ip     = $conn.LocalAddress
             local_port   = $conn.LocalPort
@@ -68,7 +121,8 @@ Write-GiipLog "INFO" "[HostConnectionList] Starting..."
             pid          = $conn.OwningProcess
             process_name = $procName
             state        = $conn.State.ToString().ToUpper()
-            traffic      = $null 
+            traffic      = $null
+            query_hash   = $qHash
         }
     }
 
