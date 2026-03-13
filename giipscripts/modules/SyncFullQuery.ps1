@@ -26,7 +26,7 @@ $Config = Get-GiipConfig
 $reqData = @{ lssn = $Config.lssn }
 $reqJson = $reqData | ConvertTo-Json -Compress
 $response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson
-$dbList = $response.data ?: @($response)
+$dbList = if ($response.data) { $response.data } else { @($response) }
 
 foreach ($db in $dbList) {
     if ($db.db_type -ne 'MSSQL') { continue }
