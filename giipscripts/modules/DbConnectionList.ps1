@@ -56,7 +56,9 @@ function Get-MSSQLConnections {
                     MAX(s.program_name) as program_name,
                     COUNT(*) as conn_count,
                     ISNULL(SUM(r.cpu_time), 0) as cpu_load,
-                    MAX(REPLACE(REPLACE(SUBSTRING(t.text, 1, 200), CHAR(13), ' '), CHAR(10), ' ')) as last_sql
+                    MAX(REPLACE(REPLACE(SUBSTRING(t.text, 1, 1000), CHAR(13), ' '), CHAR(10), ' ')) as last_sql,
+                    CONVERT(NVARCHAR(64), MAX(r.query_hash), 1) as query_hash,
+                    CONVERT(NVARCHAR(130), MAX(r.sql_handle), 1) as sql_handle
                 FROM sys.dm_exec_connections c
                 JOIN sys.dm_exec_sessions s ON c.session_id = s.session_id
                 LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id
@@ -72,6 +74,8 @@ function Get-MSSQLConnections {
                     conn_count         = $reader["conn_count"]
                     cpu_load           = $reader["cpu_load"]
                     last_sql           = $reader["last_sql"]
+                    query_hash         = $reader["query_hash"]
+                    sql_handle         = $reader["sql_handle"]
                 }
             }
             $reader.Close()
