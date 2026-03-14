@@ -58,11 +58,14 @@ Write-GiipLog "INFO" "[HostConnectionList] Starting..."
             $sqlConn.Open()
             
             $sqlCmd = $sqlConn.CreateCommand()
+            # Note: We join with dm_exec_requests to get the ACTIVE query_hash.
+            # If the session is idle, it won't be in dm_exec_requests.
             $sqlCmd.CommandText = @"
                 SELECT 
                     c.client_net_address,
                     c.client_tcp_port,
-                    CONVERT(NVARCHAR(64), r.query_hash, 1) as query_hash
+                    CONVERT(NVARCHAR(64), r.query_hash, 1) as query_hash,
+                    c.local_tcp_port
                 FROM sys.dm_exec_connections c WITH(NOLOCK)
                 JOIN sys.dm_exec_requests r WITH(NOLOCK) ON c.session_id = r.session_id
                 WHERE c.net_transport = 'TCP'
@@ -72,10 +75,11 @@ Write-GiipLog "INFO" "[HostConnectionList] Starting..."
                 $cAddr = $sqlReader["client_net_address"].ToString().Trim()
                 $cPort = $sqlReader["client_tcp_port"].ToString()
                 $qHash = $sqlReader["query_hash"].ToString()
+                $lPort = $sqlReader["local_tcp_port"].ToString()
                 
                 # Use "address:port" as key for precise matching (IP:Port standard)
                 if ($cAddr -and $cPort) {
-                    $SqlSessionMap["$cAddr:$cPort"] = $qHash
+                    $SqlSessionMap["$cAddr:$cPort"] = @{ hash = $qHash; localPort = $lPort }
                 }
             }
             $sqlReader.Close()
@@ -106,10 +110,13 @@ Write-GiipLog "INFO" "[HostConnectionList] Starting..."
         # Build Object
         # Determine if this row can be enriched with query_hash
         $qHash = ""
-        if ($SqlSessionMap.Count -gt 0 -and $conn.LocalPort -eq 1433) {
+        if ($SqlSessionMap.Count -gt 0) {
             $key = "$($conn.RemoteAddress):$($conn.RemotePort)"
             if ($SqlSessionMap.ContainsKey($key)) {
-                $qHash = $SqlSessionMap[$key]
+                # Verify local port matches to ensure we aren't matching a different service
+                if ($conn.LocalPort -eq $SqlSessionMap[$key].localPort) {
+                    $qHash = $SqlSessionMap[$key].hash
+                }
             }
         }
 
