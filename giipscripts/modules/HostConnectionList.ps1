@@ -65,6 +65,8 @@ Write-GiipLog "INFO" "[HostConnectionList] Starting..."
                     c.client_net_address,
                     c.client_tcp_port,
                     CONVERT(NVARCHAR(64), r.query_hash, 1) as query_hash,
+                    CONVERT(NVARCHAR(130), r.sql_handle, 1) as sql_handle,
+                    CONVERT(NVARCHAR(130), r.plan_handle, 1) as plan_handle,
                     c.local_tcp_port
                 FROM sys.dm_exec_connections c WITH(NOLOCK)
                 JOIN sys.dm_exec_requests r WITH(NOLOCK) ON c.session_id = r.session_id
@@ -75,11 +77,18 @@ Write-GiipLog "INFO" "[HostConnectionList] Starting..."
                 $cAddr = $sqlReader["client_net_address"].ToString().Trim()
                 $cPort = $sqlReader["client_tcp_port"].ToString()
                 $qHash = $sqlReader["query_hash"].ToString()
+                $sHandle = $sqlReader["sql_handle"].ToString()
+                $pHandle = $sqlReader["plan_handle"].ToString()
                 $lPort = $sqlReader["local_tcp_port"].ToString()
                 
                 # Use "address:port" as key for precise matching (IP:Port standard)
                 if ($cAddr -and $cPort) {
-                    $SqlSessionMap["$cAddr:$cPort"] = @{ hash = $qHash; localPort = $lPort }
+                    $SqlSessionMap["$($cAddr):$($cPort)"] = @{ 
+                        hash        = $qHash 
+                        sql_handle  = $sHandle 
+                        plan_handle = $pHandle 
+                        localPort   = $lPort 
+                    }
                 }
             }
             $sqlReader.Close()
@@ -108,14 +117,18 @@ Write-GiipLog "INFO" "[HostConnectionList] Starting..."
         }
 
         # Build Object
-        # Determine if this row can be enriched with query_hash
+        # Determine if this row can be enriched with query metadata
         $qHash = ""
+        $sqlHandle = ""
+        $planHandle = ""
         if ($SqlSessionMap.Count -gt 0) {
             $key = "$($conn.RemoteAddress):$($conn.RemotePort)"
             if ($SqlSessionMap.ContainsKey($key)) {
                 # Verify local port matches to ensure we aren't matching a different service
                 if ($conn.LocalPort -eq $SqlSessionMap[$key].localPort) {
                     $qHash = $SqlSessionMap[$key].hash
+                    $sqlHandle = $SqlSessionMap[$key].sql_handle
+                    $planHandle = $SqlSessionMap[$key].plan_handle
                 }
             }
         }
@@ -130,6 +143,8 @@ Write-GiipLog "INFO" "[HostConnectionList] Starting..."
             state        = $conn.State.ToString().ToUpper()
             traffic      = $null
             query_hash   = $qHash
+            sql_handle   = $sqlHandle
+            plan_handle  = $planHandle
         }
     }
 
