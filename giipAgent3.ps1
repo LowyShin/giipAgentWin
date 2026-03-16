@@ -157,5 +157,12 @@ if (Test-Path $dbUserListScript) {
     & $dbUserListScript
 }
 
+# 10. Full Query Sync (New)
+$syncFullQueryScript = Join-Path $ModuleDir "SyncFullQuery.ps1"
+if (Test-Path $syncFullQueryScript) {
+    Write-GiipLog "INFO" "[Step 10] Running Full Query Sync..."
+    & $syncFullQueryScript
+}
+
 Write-GiipLog "INFO" "=== giipAgent3.ps1 Completed ==="
 exit 0

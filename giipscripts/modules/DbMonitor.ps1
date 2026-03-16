@@ -115,7 +115,7 @@ if ($statsList.Count -gt 0) {
         try {
             # 🔧 Restored to Standard: Placeholders in text for the gateway to replace from JsonData
             # This follows the 'Correct Approach' in PROHIBITED_ACTION_2_RUN_PS1.md
-            $cmdText = "MdbStatsUpdate mdb_id uptime threads qps buffer_pool cpu memory"
+            $cmdText = "MdbStatsUpdate mdb_id uptime threads qps buffer_pool cpu memory query_hash"
             $statJson = $stat | ConvertTo-Json -Compress
             
             $response = Invoke-GiipApiV2 -Config $Config -CommandText $cmdText -JsonData $statJson

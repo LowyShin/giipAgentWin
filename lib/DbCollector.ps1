@@ -26,6 +26,7 @@ function Get-GiipDbMetrics {
         buffer_pool = 0
         cpu         = 0
         memory      = 0
+        query_hash  = ""
     }
 
     Write-GiipLog "DEBUG" "[DbCollector] Checking DB: $mdb_id ($db_type) at $dbHost"
@@ -43,7 +44,8 @@ function Get-GiipDbMetrics {
                     (SELECT cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'User Connections') as threads,
                     (SELECT cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Batch Requests/sec') as qps,
                     (SELECT cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Total Server Memory (KB)') as memory_kb,
-                    (SELECT sqlserver_start_time FROM sys.dm_os_sys_info) as start_time
+                    (SELECT sqlserver_start_time FROM sys.dm_os_sys_info) as start_time,
+                    (SELECT TOP 1 CONVERT(NVARCHAR(64), query_hash, 1) FROM sys.dm_exec_requests WHERE query_hash != 0x0 ORDER BY cpu_time DESC) as active_query_hash
 "@
             $reader = $cmd.ExecuteReader()
             if ($reader.Read()) {
@@ -56,6 +58,10 @@ function Get-GiipDbMetrics {
                 $startTime = $reader["start_time"]
                 if ($startTime) {
                     $stat.uptime = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 0)
+                }
+                
+                if ($reader["active_query_hash"] -isnot [System.DBNull]) {
+                    $stat.query_hash = $reader["active_query_hash"]
                 }
             }
             $reader.Close()
