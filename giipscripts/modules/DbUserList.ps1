@@ -127,23 +127,7 @@ try {
             }
             elseif ($db.db_type -match 'MySQL|MariaDB') {
                 try {
-                    # Try to find MySql.Data.dll
-                    $dllPaths = @(
-                        Join-Path $LibDir "MySql.Data.dll",
-                        "C:\Program Files\MySQL\MySQL Connector Net 8.0.33\Assemblies\v4\MySql.Data.dll",
-                        "C:\Program Files\MySQL\MySQL Connector Net 8.0.32\Assemblies\v4\MySql.Data.dll"
-                    )
-                    
-                    $loaded = $false
-                    foreach ($path in $dllPaths) {
-                        if (Test-Path $path) {
-                            [void][System.Reflection.Assembly]::LoadFrom($path)
-                            $loaded = $true
-                            break
-                        }
-                    }
-
-                    if (-not $loaded) {
+                    if (-not (Import-MySqlDll -LibDir $LibDir)) {
                         throw "MySql.Data.dll not found in any of the search paths."
                     }
 

@@ -34,8 +34,16 @@ function Get-GiipDbMetrics {
     if ($db_type -eq 'MSSQL') {
         # MSSQL Collection
         try {
-            $connStr = "Server=$dbHost,$port;Database=master;User Id=$user;Password=$pass;TrustServerCertificate=True;Connection Timeout=5;" # Reduced timeout to 5s
-            $conn = New-Object System.Data.SqlClient.SqlConnection($connStr)
+            # Use SqlConnectionStringBuilder for robust password handling
+            $builder = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
+            $builder.DataSource = "$dbHost,$port"
+            $builder.InitialCatalog = "master"
+            $builder.UserID = $user
+            $builder.Password = $pass
+            $builder.TrustServerCertificate = $true
+            $builder.ConnectTimeout = 10
+            
+            $conn = New-Object System.Data.SqlClient.SqlConnection($builder.ConnectionString)
             $conn.Open()
             
             $cmd = $conn.CreateCommand()
@@ -71,48 +79,29 @@ function Get-GiipDbMetrics {
             return $stat
         }
         catch {
-            # Log to local file with WARN
             Write-GiipLog "WARN" "[DbCollector] ❌ MSSQL Connection failed for DB ${mdb_id} ($dbHost): $($_.Exception.Message)"
-            
-            # Send to Central Error Log only if it's not a simple timeout or for visibility as 'warn'
-            try {
-                $errorLogPath = Join-Path $LibDir "ErrorLog.ps1"
-                if (Test-Path $errorLogPath) {
-                    . $errorLogPath
-                    $errData = @{
-                        mdb_id    = $mdb_id
-                        db_host   = $dbHost
-                        exception = $_.Exception.Message
-                        source    = "DbCollector"
-                    } | ConvertTo-Json -Compress
-                    
-                    # Reduce noise by setting severity to 'warn' for connection issues
-                    sendErrorLog -Config $Config `
-                        -Message "[DbCollector] MSSQL Connection Failed (ID: ${mdb_id}, Host: ${dbHost})" `
-                        -Data $errData `
-                        -Severity "warn" `
-                        -ErrorType "DbConnectionWarning" | Out-Null
-                }
-            }
-            catch {}
-            
             return $null
         }
     }
     elseif ($db_type -match 'MySQL|MariaDB') {
         # MySQL Collection
-        $dllPath = Join-Path $LibDir "MySql.Data.dll"
-        if (Test-Path $dllPath) {
+        if (Import-MySqlDll -LibDir $LibDir) {
             try {
-                [void][System.Reflection.Assembly]::LoadFile($dllPath)
                 $connStr = "Server=$dbHost;Port=$port;Uid=$user;Pwd=$pass;SslMode=None;Connection Timeout=10;"
                 $conn = New-Object MySql.Data.MySqlClient.MySqlConnection($connStr)
                 $conn.Open()
                 
                 $cmd = $conn.CreateCommand()
-                $cmd.CommandText = "SHOW GLOBAL STATUS WHERE Variable_name IN ('Threads_connected', 'Questions', 'Innodb_buffer_pool_pages_total', 'Innodb_buffer_pool_pages_free', 'Uptime')"
+                # Unified query to get stats + longest running query info for hashing
+                $cmd.CommandText = @"
+                    SHOW GLOBAL STATUS WHERE Variable_name IN ('Threads_connected', 'Questions', 'Innodb_buffer_pool_pages_total', 'Innodb_buffer_pool_pages_free', 'Uptime');
+                    SELECT info FROM information_schema.processlist WHERE command != 'Sleep' AND info IS NOT NULL ORDER BY time DESC LIMIT 1;
+"@
                 $reader = $cmd.ExecuteReader()
                 
+                $total_pages = 0
+                $free_pages = 0
+
                 while ($reader.Read()) {
                     $name = $reader["Variable_name"]
                     $val = $reader["Value"]
@@ -125,6 +114,16 @@ function Get-GiipDbMetrics {
                         'Innodb_buffer_pool_pages_free' { $free_pages = [float]$val }
                     }
                 }
+
+                # Attempt to get active query for hashing
+                if ($reader.NextResult() -and $reader.Read()) {
+                    $sqlInfo = $reader["info"]
+                    if ($sqlInfo -isnot [System.DBNull]) {
+                        # Align with Linux agent: query_hash = MD5(SQL)
+                        $stat.query_hash = Get-StringMd5 -InputString $sqlInfo
+                    }
+                }
+
                 if ($total_pages -gt 0) {
                     $stat.buffer_pool = [math]::Round((($total_pages - $free_pages) / $total_pages) * 100, 2)
                 }

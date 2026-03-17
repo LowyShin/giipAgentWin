@@ -7,6 +7,36 @@
 $LOG_DIR_REL = '../giipLogs'
 $LOG_RETENTION_DAYS = 30
 
+# Helper: Get MD5 hash of a string (Aligns with Linux agent's query_hash)
+function Get-StringMd5 {
+    param([string]$InputString)
+    if ([string]::IsNullOrWhiteSpace($InputString)) { return "" }
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($InputString)
+    $md5 = [System.Security.Cryptography.MD5]::Create()
+    $hash = $md5.ComputeHash($bytes)
+    return "0x" + ($hash | ForEach-Object { $_.ToString("x2") } | Join-String -Separator "")
+}
+
+# Helper: Load MySql.Data.dll from common locations
+function Import-MySqlDll {
+    param([string]$LibDir)
+    $dllPaths = @(
+        Join-Path $LibDir "MySql.Data.dll",
+        "C:\Program Files\MySQL\MySQL Connector Net 8.0.33\Assemblies\v4\MySql.Data.dll",
+        "C:\Program Files\MySQL\MySQL Connector Net 8.0.32\Assemblies\v4\MySql.Data.dll"
+    )
+    
+    foreach ($path in $dllPaths) {
+        if (Test-Path $path) {
+            try {
+                [void][System.Reflection.Assembly]::LoadFrom($path)
+                return $true
+            } catch {}
+        }
+    }
+    return $false
+}
+
 function Write-GiipLog {
     param(
         [Parameter(Mandatory)][ValidateSet('INFO', 'WARN', 'ERROR', 'DEBUG')] [string]$Level,
