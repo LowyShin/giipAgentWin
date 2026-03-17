@@ -10,6 +10,7 @@ $AgentRoot = Split-Path -Path (Split-Path -Path $ScriptDir -Parent) -Parent
 $LibDir = Join-Path $AgentRoot "lib"
 
 # Load Libraries
+$Global:UploadedHashes = @{}
 try {
     . (Join-Path $LibDir "Common.ps1")
     . (Join-Path $LibDir "KVS.ps1")
@@ -54,8 +55,11 @@ function Get-MSSQLConnections {
                 COUNT(*) as conn_count,
                 ISNULL(SUM(r.cpu_time), 0) as cpu_load,
                 MAX(REPLACE(REPLACE(SUBSTRING(t.text, 1, 1000), CHAR(13), ' '), CHAR(10), ' ')) as last_sql,
+                MAX(t.text) as full_sql,
                 CONVERT(NVARCHAR(64), r.query_hash, 1) as query_hash,
-                CONVERT(NVARCHAR(130), r.sql_handle, 1) as sql_handle
+                CONVERT(NVARCHAR(130), r.sql_handle, 1) as sql_handle,
+                MAX(r.start_time) as query_start_time,
+                MAX(s.session_id) as query_id
             FROM sys.dm_exec_connections c
             JOIN sys.dm_exec_sessions s ON c.session_id = s.session_id
             LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id
@@ -71,8 +75,11 @@ function Get-MSSQLConnections {
                 conn_count         = $reader["conn_count"]
                 cpu_load           = $reader["cpu_load"]
                 last_sql           = $reader["last_sql"]
+                full_sql           = if ($reader["full_sql"] -isnot [System.DBNull]) { $reader["full_sql"] } else { "" }
                 query_hash         = $reader["query_hash"]
                 sql_handle         = $reader["sql_handle"]
+                query_start_time   = if ($reader["query_start_time"] -isnot [System.DBNull]) { [DateTime]$reader["query_start_time"] } else { $null }
+                query_id           = $reader["query_id"]
             }
         }
         $reader.Close()
@@ -109,7 +116,7 @@ function Get-MySQLConnections {
         $connList = @()
         $cmd = $conn.CreateCommand()
         # information_schema.processlist is standard for session monitoring
-        $cmd.CommandText = "SELECT host, user, db, command, time, info FROM information_schema.processlist WHERE command != 'Sleep' AND user NOT IN ('system user', 'event_scheduler')"
+        $cmd.CommandText = "SELECT id, host, user, db, command, time, info FROM information_schema.processlist WHERE command != 'Sleep' AND user NOT IN ('system user', 'event_scheduler')"
         $reader = $cmd.ExecuteReader()
         
         while ($reader.Read()) {
@@ -125,7 +132,10 @@ function Get-MySQLConnections {
                 status             = "active"
                 cpu_load           = [int]$reader["time"]
                 last_sql           = $sqlText
+                full_sql           = $sqlText
                 query_hash         = Get-StringMd5 -InputString $sqlText
+                query_id           = $reader["id"]
+                query_start_time   = (Get-Date).AddSeconds(-[int]$reader["time"])
             }
         }
         $reader.Close()
@@ -152,7 +162,16 @@ function Send-ConnectionData {
     if ($ConnList.Count -eq 0) { return $false }
     
     Write-GiipLog "INFO" "[DbConnectionList] Sending $($ConnList.Count) connections for DB: $MdbId"
-    $response = Invoke-GiipKvsPut -Config $Config -Type "database" -Key "$MdbId" -Factor "db_connections" -Value $ConnList
+    
+    # Strip full_sql before uploading standard db_connections payload
+    $cleanList = @()
+    foreach ($c in $ConnList) {
+        $clone = $c.Clone()
+        if ($clone.ContainsKey("full_sql")) { $clone.Remove("full_sql") }
+        $cleanList += $clone
+    }
+    
+    $response = Invoke-GiipKvsPut -Config $Config -Type "database" -Key "$MdbId" -Factor "db_connections" -Value $cleanList
     
     if ($null -eq $response -or $response.RstVal -ne "200") {
         Write-GiipLog "WARN" "[DbConnectionList] API Error for DB $MdbId: $($response.RstMsg)"
@@ -191,6 +210,21 @@ try {
 
             if ($connections.Count -gt 0) {
                 Send-ConnectionData -Config $Config -MdbId $db.mdb_id -ConnList $connections | Out-Null
+                
+                # [NEW] Upload Top 20 Query Hashes for Net3D View Full Query
+                $topQueries = $connections | Where-Object { -not [string]::IsNullOrWhiteSpace($_.query_hash) -and -not [string]::IsNullOrWhiteSpace($_.full_sql) } | Sort-Object -Property cpu_load -Descending | Select-Object -First 20
+                
+                foreach ($q in $topQueries) {
+                    $qHash = $q.query_hash
+                    if (-not $Global:UploadedHashes.ContainsKey($qHash)) {
+                        $Global:UploadedHashes[$qHash] = $true
+                        $fullText = $q.full_sql
+                        if ($fullText.Length -gt 20000) { $fullText = $fullText.Substring(0, 20000) }
+                        
+                        Invoke-GiipKvsPut -Config $Config -Type "query" -Key $qHash -Factor "full_text" -Value $fullText | Out-Null
+                        Write-GiipLog "DEBUG" "[DbConnectionList] Uploaded full text for query $qHash"
+                    }
+                }
             }
         }
         catch {
