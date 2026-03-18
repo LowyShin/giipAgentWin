@@ -104,7 +104,7 @@ function Get-MySQLConnections {
     )
 
     if (-not (Import-MySqlDll -LibDir $LibDir)) {
-        Write-GiipLog "WARN" "[DbConnectionList] Skipped MySQL $DbHost: MySql.Data.dll not found."
+        Write-GiipLog "WARN" "[DbConnectionList] Skipped MySQL ${DbHost}: MySql.Data.dll not found."
         return @()
     }
 
@@ -143,7 +143,7 @@ function Get-MySQLConnections {
         return $connList
     }
     catch {
-        Write-GiipLog "WARN" "[DbConnectionList] MySQL Error for $DbHost: $_"
+        Write-GiipLog "WARN" "[DbConnectionList] MySQL Error for ${DbHost}: $_"
         return @()
     }
 }
@@ -174,7 +174,7 @@ function Send-ConnectionData {
     $response = Invoke-GiipKvsPut -Config $Config -Type "database" -Key "$MdbId" -Factor "db_connections" -Value $cleanList
     
     if ($null -eq $response -or $response.RstVal -ne "200") {
-        Write-GiipLog "WARN" "[DbConnectionList] API Error for DB $MdbId: $($response.RstMsg)"
+        Write-GiipLog "WARN" "[DbConnectionList] API Error for DB ${MdbId}: $($response.RstMsg)"
         return $false
     }
     return $true
