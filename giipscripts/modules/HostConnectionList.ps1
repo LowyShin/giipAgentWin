@@ -31,6 +31,7 @@ catch {
 
 Write-GiipLog "INFO" "[HostConnectionList] Starting..."
 
+try {
     # 1. Get TCP Connections (State: Established, Listen)
     # Note: Requires Windows 8 / Server 2012 or later
     # ⚠️ Security Note: Include LISTEN state to detect potential backdoors/threats
