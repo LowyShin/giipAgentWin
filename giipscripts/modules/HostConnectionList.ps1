@@ -111,29 +111,15 @@ try {
         if ($conn.LocalAddress -eq "127.0.0.1" -or $conn.LocalAddress -eq "::1") { continue }
 
         # Resolve Process Name
-        $procName = "Unknown"
+        $procName = $null
         if ($conn.OwningProcess -gt 0) {
             $p = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
             if ($p) { $procName = $p.ProcessName }
         }
 
         # Build Object
-        # Determine if this row can be enriched with query metadata
-        $qHash = ""
-        $sqlHandle = ""
-        $planHandle = ""
-        if ($SqlSessionMap.Count -gt 0) {
-            $key = "$($conn.RemoteAddress):$($conn.RemotePort)"
-            if ($SqlSessionMap.ContainsKey($key)) {
-                # Verify local port matches to ensure we aren't matching a different service
-                if ($conn.LocalPort -eq $SqlSessionMap[$key].localPort) {
-                    $qHash = $SqlSessionMap[$key].hash
-                    $sqlHandle = $SqlSessionMap[$key].sql_handle
-                    $planHandle = $SqlSessionMap[$key].plan_handle
-                }
-            }
-        }
-
+        # ... (qHash enrichment) ...
+        
         $report += @{
             local_ip     = $conn.LocalAddress
             local_port   = $conn.LocalPort
