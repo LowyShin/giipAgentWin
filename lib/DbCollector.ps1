@@ -34,16 +34,9 @@ function Get-GiipDbMetrics {
     if ($db_type -eq 'MSSQL') {
         # MSSQL Collection
         try {
-            # Use SqlConnectionStringBuilder for robust password handling
-            $builder = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
-            $builder.DataSource = "$dbHost,$port"
-            $builder.InitialCatalog = "master"
-            $builder.UserID = $user
-            $builder.Password = $pass
-            $builder.TrustServerCertificate = $true
-            $builder.ConnectTimeout = 10
-            
-            $conn = New-Object System.Data.SqlClient.SqlConnection($builder.ConnectionString)
+            # Use direct connection string for maximum compatibility
+            $connStr = "Server=$dbHost,$port;Database=master;User Id=$user;Password=$pass;TrustServerCertificate=True;Connection Timeout=10;"
+            $conn = New-Object System.Data.SqlClient.SqlConnection($connStr)
             $conn.Open()
             
             $cmd = $conn.CreateCommand()
@@ -117,10 +110,11 @@ function Get-GiipDbMetrics {
 
                 # Attempt to get active query for hashing
                 if ($reader.NextResult() -and $reader.Read()) {
+                    # Sanitize SQL: Remove newlines and excessive whitespace for JSON safety
                     $sqlInfo = $reader["info"]
                     if ($sqlInfo -isnot [System.DBNull]) {
-                        # Align with Linux agent: query_hash = MD5(SQL)
-                        $stat.query_hash = Get-StringMd5 -InputString $sqlInfo
+                        $cleanSql = $sqlInfo.Replace("`r", " ").Replace("`n", " ") -replace '\s+', ' '
+                        $stat.query_hash = Get-StringMd5 -InputString $cleanSql
                     }
                 }
 

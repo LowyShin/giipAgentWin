@@ -50,8 +50,10 @@ foreach ($db in $dbList) {
         while ($reader.Read()) {
             $hash = $reader["query_hash"]
             $text = $reader["full_text"]
-            if ($hash -and $text) {
-                Invoke-GiipKvsPut -Config $Config -Type "query" -Key "$hash" -Factor "full_text" -Value $text
+            if ($hash -and $text -and $text -isnot [System.DBNull]) {
+                # Sanitize SQL: Remove newlines and excessive whitespace for JSON safety
+                $cleanText = $text.Replace("`r", " ").Replace("`n", " ") -replace '\s+', ' '
+                Invoke-GiipKvsPut -Config $Config -Type "query" -Key "$hash" -Factor "full_text" -Value $cleanText
             }
         }
         $reader.Close()

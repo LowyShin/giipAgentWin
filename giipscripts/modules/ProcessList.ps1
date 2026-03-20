@@ -6,7 +6,20 @@
 # ============================================================================
 
 try {
-    # Load Config (Assume Common/Kvs loaded by caller or load here if needed)
+    $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
+    $AgentRoot = Split-Path -Path (Split-Path -Path $ScriptDir -Parent) -Parent
+    $LibDir = Join-Path $AgentRoot "lib"
+
+    # Load Libraries
+    try {
+        . (Join-Path $LibDir "Common.ps1")
+        . (Join-Path $LibDir "KVS.ps1")
+    }
+    catch {
+        Write-Host "FATAL: Failed to load libraries from $LibDir"
+        exit 1
+    }
+
     $Config = Get-GiipConfig
 
     # 1. Collect Process List

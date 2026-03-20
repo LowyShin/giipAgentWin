@@ -33,15 +33,9 @@ function Get-MSSQLConnections {
         [Parameter(Mandatory = $true)][string]$Pass
     )
     
-    $builder = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
-    $builder.DataSource = "$DbHost,$Port"
-    $builder.InitialCatalog = "master"
-    $builder.UserID = $User
-    $builder.Password = $Pass
-    $builder.TrustServerCertificate = $true
-    $builder.ConnectTimeout = 10
-    
-    $conn = New-Object System.Data.SqlClient.SqlConnection($builder.ConnectionString)
+    # Use direct connection string for maximum compatibility
+    $connStr = "Server=$DbHost,$Port;Database=master;User Id=$User;Password=$Pass;TrustServerCertificate=True;Connection Timeout=10;"
+    $conn = New-Object System.Data.SqlClient.SqlConnection($connStr)
     $conn.Open()
     
     $connList = @()
@@ -219,6 +213,9 @@ try {
                     if (-not $Global:UploadedHashes.ContainsKey($qHash)) {
                         $Global:UploadedHashes[$qHash] = $true
                         $fullText = $q.full_sql
+                        # Sanitize SQL for JSON safety (Strip newlines and excessive spaces)
+                        $fullText = $fullText.Replace("`r", " ").Replace("`n", " ") -replace '\s+', ' '
+                        
                         if ($fullText.Length -gt 20000) { $fullText = $fullText.Substring(0, 20000) }
                         
                         Invoke-GiipKvsPut -Config $Config -Type "query" -Key $qHash -Factor "full_text" -Value $fullText | Out-Null
