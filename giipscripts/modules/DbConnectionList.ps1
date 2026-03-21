@@ -50,15 +50,16 @@ function Get-MSSQLConnections {
                 ISNULL(SUM(r.cpu_time), 0) as cpu_load,
                 MAX(REPLACE(REPLACE(SUBSTRING(t.text, 1, 1000), CHAR(13), ' '), CHAR(10), ' ')) as last_sql,
                 MAX(t.text) as full_sql,
-                CONVERT(NVARCHAR(64), r.query_hash, 1) as query_hash,
-                CONVERT(NVARCHAR(130), r.sql_handle, 1) as sql_handle,
+                CONVERT(NVARCHAR(64), ISNULL(MAX(r.query_hash), MAX(qs.query_hash)), 1) as query_hash,
+                CONVERT(NVARCHAR(130), ISNULL(MAX(r.sql_handle), MAX(c.most_recent_sql_handle)), 1) as sql_handle,
                 MAX(r.start_time) as query_start_time,
                 MAX(s.session_id) as query_id
             FROM sys.dm_exec_connections c
             JOIN sys.dm_exec_sessions s ON c.session_id = s.session_id
             LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id
-            OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
-            GROUP BY c.client_net_address, r.query_hash, r.sql_handle
+            OUTER APPLY sys.dm_exec_sql_text(ISNULL(r.sql_handle, c.most_recent_sql_handle)) t
+            OUTER APPLY (SELECT TOP 1 query_hash FROM sys.dm_exec_query_stats WHERE sql_handle = ISNULL(r.sql_handle, c.most_recent_sql_handle)) qs
+            GROUP BY c.client_net_address, ISNULL(r.sql_handle, c.most_recent_sql_handle)
 "@
         $reader = $cmd.ExecuteReader()
         
