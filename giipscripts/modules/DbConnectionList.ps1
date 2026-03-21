@@ -214,13 +214,10 @@ try {
                     if (-not $Global:UploadedHashes.ContainsKey($qHash)) {
                         $Global:UploadedHashes[$qHash] = $true
                         $fullText = $q.full_sql
-                        # Sanitize SQL for JSON safety (Strip newlines and excessive spaces)
-                        $fullText = $fullText.Replace("`r", " ").Replace("`n", " ") -replace '\s+', ' '
+                        $csnStr = if ($db.csn) { [string]$db.csn } else { "global" }
                         
-                        if ($fullText.Length -gt 20000) { $fullText = $fullText.Substring(0, 20000) }
-                        
-                        Invoke-GiipKvsPut -Config $Config -Type "query" -Key $qHash -Factor "full_text" -Value $fullText | Out-Null
-                        Write-GiipLog "DEBUG" "[DbConnectionList] Uploaded full text for query $qHash"
+                        Invoke-GiipKvsPut -Config $Config -Type "query" -Key $qHash -Factor $csnStr -Value $fullText | Out-Null
+                        Write-GiipLog "DEBUG" "[DbConnectionList] Uploaded full text for query $qHash (CSN: $csnStr)"
                     }
                 }
             }
