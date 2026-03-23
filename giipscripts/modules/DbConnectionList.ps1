@@ -88,8 +88,13 @@ function Get-MSSQLConnections {
         # 3. Finalize Data with standard session_id
         foreach ($s in $snapshot) {
             $h = $s.sql_handle
-            $fullSql = if ($h -and $sqlCache.ContainsKey($h)) { $sqlCache[$h] } else { "" }
-            $lastSql = if ($fullSql) { $fullSql.Substring(0, [Math]::Min(1000, $fullSql.Length)).Replace("`r", " ").Replace("`n", " ") } else { "" }
+            $fullSql = ""
+            if ($h -and $sqlCache.ContainsKey($h)) { $fullSql = $sqlCache[$h] }
+            
+            $lastSql = ""
+            if ($fullSql) { 
+                $lastSql = $fullSql.Substring(0, [Math]::Min(1000, $fullSql.Length)).Replace("`r", " ").Replace("`n", " ") 
+            }
 
             $connList += @{
                 session_id         = $s.session_id
@@ -105,7 +110,7 @@ function Get-MSSQLConnections {
         }
     }
     finally {
-        $conn.Close()
+        if ($null -ne $conn) { $conn.Close() }
     }
     return $connList
 }
@@ -123,12 +128,12 @@ function Get-MySQLConnections {
         return @()
     }
 
+    $connList = @()
     try {
         $connStr = "Server=$DbHost;Port=$Port;Uid=$User;Pwd=$Pass;SslMode=None;Connection Timeout=10;"
         $conn = New-Object MySql.Data.MySqlClient.MySqlConnection($connStr)
         $conn.Open()
         
-        $connList = @()
         $cmd = $conn.CreateCommand()
         $cmd.CommandText = "SELECT id, host, user, db, command, time, info FROM information_schema.processlist WHERE command != 'Sleep' AND user NOT IN ('system user', 'event_scheduler')"
         $reader = $cmd.ExecuteReader()
@@ -153,12 +158,11 @@ function Get-MySQLConnections {
         }
         $reader.Close()
         $conn.Close()
-        return $connList
     }
     catch {
         Write-GiipLog "WARN" "[DbConnectionList] MySQL Error for ${DbHost}: $_"
-        return @()
     }
+    return $connList
 }
 
 function Send-ConnectionData {
