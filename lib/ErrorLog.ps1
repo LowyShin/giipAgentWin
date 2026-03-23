@@ -28,7 +28,20 @@ function sendErrorLog {
         [string]$Severity = 'error',
         
         [Parameter(Mandatory = $false)]
-        [string]$ErrorType = $null
+        [string]$ErrorType = $null,
+
+        # [NEW] Debugging fields (Ref: ERRORLOG_DEBUG_FIELDS_SUMMARY.md)
+        [Parameter(Mandatory = $false)]
+        [object]$InputValues = $null,
+
+        [Parameter(Mandatory = $false)]
+        [string]$QueryText = $null,
+
+        [Parameter(Mandatory = $false)]
+        [object]$VarTrace = $null,
+
+        [Parameter(Mandatory = $false)]
+        [object]$ParsedParams = $null
     )
     
     try {
@@ -80,6 +93,18 @@ function sendErrorLog {
         
         if ($ErrorType) {
             $payload.errorType = $ErrorType
+        }
+
+        # [NEW] Add Debugging Fields if provided
+        if ($null -ne $InputValues) { 
+            $payload.inputValues = if ($InputValues -is [string]) { $InputValues } else { $InputValues | ConvertTo-Json -Depth 5 -Compress }
+        }
+        if ($null -ne $QueryText) { $payload.queryText = $QueryText }
+        if ($null -ne $VarTrace) { 
+            $payload.varTrace = if ($VarTrace -is [string]) { $VarTrace } else { $VarTrace | ConvertTo-Json -Depth 5 -Compress }
+        }
+        if ($null -ne $ParsedParams) { 
+            $payload.parsedParams = if ($ParsedParams -is [string]) { $ParsedParams } else { $ParsedParams | ConvertTo-Json -Depth 5 -Compress }
         }
         
         # JSON이 유효하면 requestData에, 아니면 서버가 RawData로 처리
