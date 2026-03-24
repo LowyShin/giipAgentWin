@@ -27,11 +27,15 @@ $giipConfig = @{}
 
 function Write-Log {
     param([string]$Message, [string]$Tag = "INFO")
-    $timestamp = Get-Date -Format "yyyyMMdd HH:mm:ss" # Rule: YYYYMMDD HH:mm:SS
+    $timestamp = Get-Date -Format "yyyyMMdd HH:mm:ss"
     $logMessage = "[$timestamp] [$Tag] $Message"
     Write-Host $logMessage
-    if (-not (Test-Path $LOG_DIR)) { New-Item -ItemType Directory -Path $LOG_DIR -Force | Out-Null }
-    Add-Content -Path $LOG_FILE -Value $logMessage -Encoding UTF8
+    try {
+        if (-not (Test-Path $LOG_DIR)) { New-Item -ItemType Directory -Path $LOG_DIR -Force -ErrorAction SilentlyContinue | Out-Null }
+        Add-Content -Path $LOG_FILE -Value $logMessage -Encoding UTF8 -ErrorAction SilentlyContinue
+    } catch {
+        # Fallback to console only if file is locked
+    }
 }
 
 function Send-RemoteLog {
