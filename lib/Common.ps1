@@ -146,11 +146,11 @@ function Parse-ConfigFile {
     $config = @{}
     $lines = Get-Content -LiteralPath $Path
     foreach ($line in $lines) {
-        # Regex for 'Key = "Value"' format
-        if ($line -match '^\s*(\w+)\s*=\s*"([^"]*)"') {
-            $key = $Matches[1]
-            $val = $Matches[2]
-            $config[$key] = $val
+        # Regex for 'Key = Value' or 'Key = "Value"' format
+        if ($line -match '^\s*([^#=;]+)\s*=\s*"?([^"]*)"?') {
+            $key = $Matches[1].Trim()
+            $val = $Matches[2].Trim()
+            if ($key) { $config[$key] = $val }
         }
     }
     
