@@ -4,8 +4,10 @@
 # Architecture: Stateless, Non-Admin, JSON Communication.
 # ============================================================================
 
+Write-Host "[Trace] Initializing paths..."
 $ErrorActionPreference = "Stop"
-$ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
+$ScriptDir = $PSScriptRoot
+if (-not $ScriptDir) { $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent }
 $Global:BaseDir = $ScriptDir
 $ModuleDir = Join-Path $ScriptDir "giipscripts\modules"
 $DataDir = Join-Path $ScriptDir "data"
@@ -13,17 +15,21 @@ $QueueFile = Join-Path $DataDir "queue.json"
 $LibDir = Join-Path $ScriptDir "lib"
 
 # Load Common for logging
+Write-Host "[Trace] Loading Common.ps1..."
 try {
     . (Join-Path $LibDir "Common.ps1")
+    Write-Host "[Trace] Common.ps1 loaded."
 }
 catch { 
     Write-Host "Warning: Common lib not loaded. ($_)" 
 }
 
 # 1. Log Cleanup (Maintenance)
+Write-Host "[Trace] Starting Log Cleanup..."
 try {
     . (Join-Path $LibDir "LogCleanup.ps1")
     Start-LogCleanup -Days 7
+    Write-Host "[Trace] Log Cleanup finished."
 }
 catch {
     Write-Host "Warning: Log cleanup failed. ($_)"
@@ -33,6 +39,7 @@ if (-not (Get-Command "Write-GiipLog" -ErrorAction SilentlyContinue)) {
     function Write-GiipLog { param($Level, $Message) Write-Host "[$Level] $Message" }
 }
 
+Write-Host "[Trace] Final initialization complete."
 Write-GiipLog "INFO" "=== giipAgent3.ps1 Started ==="
 
 # 2. Clean State (Module Call)
