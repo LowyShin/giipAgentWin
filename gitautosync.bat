@@ -1,56 +1,15 @@
 @echo off
-REM Force git sync - discard local changes and pull from remote
-REM This script ignores all local changes and forces download from git
+REM Safe git sync wrapper for PowerShell script
+REM This version delegates the sync logic to git-auto-sync.ps1 (v1.3.8+)
 
 cd /d %~dp0
 
-echo Forcing git sync - discarding local changes...
-echo.
-
-REM Fetch latest changes from remote
-echo Fetching from remote repository...
-git fetch --all
+echo Starting Safe Git Sync...
+powershell -ExecutionPolicy Bypass -File .\git-auto-sync.ps1
 if errorlevel 1 (
-    echo ERROR: Failed to fetch from remote repository
+    echo ERROR: Safe sync failed.
     exit /b 1
 )
-echo Fetch completed successfully.
-echo.
 
-REM Get current branch name
-echo Detecting current branch...
-for /f "tokens=*" %%i in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set BRANCH=%%i
-if "%BRANCH%"=="" (
-    echo ERROR: Failed to detect current branch
-    exit /b 1
-)
-echo Current branch: %BRANCH%
-echo.
-
-REM Discard all local changes and force reset to remote branch
-echo Resetting to remote branch state...
-git reset --hard "origin/%BRANCH%"
-if errorlevel 1 (
-    echo ERROR: Failed to reset to remote branch
-    exit /b 1
-)
-echo Reset completed successfully.
-echo.
-
-REM Clean untracked files and directories
-echo Cleaning untracked files...
-git clean -fd
-if errorlevel 1 (
-    echo ERROR: Failed to clean untracked files
-    exit /b 1
-)
-echo Clean completed successfully.
-echo.
-
-echo ============================================
-echo Git sync completed - all local changes discarded
-echo Branch: %BRANCH%
-echo ============================================
-echo.
-
+echo Safe Git Sync completed successfully.
 exit /b 0
