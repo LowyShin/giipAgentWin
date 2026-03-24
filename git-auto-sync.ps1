@@ -4,7 +4,7 @@
 .DESCRIPTION
     로컬 변경사항을 보존하면서 원격 브랜치와 안전하게 동기화합니다.
 .NOTES
-    Version: 1.3.7 (Safe & Conservative)
+    Version: 1.3.8 (Robust Logging)
     Author: GIIP Team
     Last Updated: 2026-03-24
 #>
@@ -52,7 +52,7 @@ function Send-RemoteLog {
 }
 
 Write-Log "=========================================="
-Write-Log "Git Auto-Sync v1.3.7 (Safe Mode)"
+Write-Log "Git Auto-Sync v1.3.8 (Safe Mode)"
 Write-Log "Repository: $RepoPath"
 Write-Log "=========================================="
 
