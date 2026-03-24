@@ -157,7 +157,13 @@ function Parse-ConfigFile {
     # Minimal Validation
     if (-not $config.ContainsKey('sk')) { throw "Config missing 'sk' (Security Token)." }
     if (-not $config.ContainsKey('lssn')) { throw "Config missing 'lssn' (Logical Server Serial Number)." }
-    if (-not $config.ContainsKey('apiaddrv2')) { throw "Config missing 'apiaddrv2' (API Endpoint)." }
+    
+    # Support both 'apiaddrv2' and legacy 'api_url'
+    if ($config.ContainsKey('api_url') -and -not $config.ContainsKey('apiaddrv2')) {
+        $config['apiaddrv2'] = $config['api_url']
+    }
+    
+    if (-not $config.ContainsKey('apiaddrv2')) { throw "Config missing 'apiaddrv2' or 'api_url' (API Endpoint)." }
     
     return $config
 }
