@@ -7,36 +7,6 @@
 $LOG_DIR_REL = '../giipLogs'
 $LOG_RETENTION_DAYS = 30
 
-# Helper: Get MD5 hash of a string (Aligns with Linux agent's query_hash)
-function Get-StringMd5 {
-    param([string]$InputString)
-    if ([string]::IsNullOrWhiteSpace($InputString)) { return "" }
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes($InputString)
-    $md5 = [System.Security.Cryptography.MD5]::Create()
-    $hash = $md5.ComputeHash($bytes)
-    return "0x" + ($hash | ForEach-Object { $_.ToString("x2") } | Join-String -Separator "")
-}
-
-# Helper: Load MySql.Data.dll from common locations
-function Import-MySqlDll {
-    param([string]$LibDir)
-    $dllPaths = @(
-        Join-Path $LibDir "MySql.Data.dll",
-        "C:\Program Files\MySQL\MySQL Connector Net 8.0.33\Assemblies\v4\MySql.Data.dll",
-        "C:\Program Files\MySQL\MySQL Connector Net 8.0.32\Assemblies\v4\MySql.Data.dll"
-    )
-    
-    foreach ($path in $dllPaths) {
-        if (Test-Path $path) {
-            try {
-                [void][System.Reflection.Assembly]::LoadFrom($path)
-                return $true
-            } catch {}
-        }
-    }
-    return $false
-}
-
 function Write-GiipLog {
     param(
         [Parameter(Mandatory)][ValidateSet('INFO', 'WARN', 'ERROR', 'DEBUG')] [string]$Level,
@@ -129,7 +99,7 @@ function Get-GiipConfig {
                 }
                 
                 $fullPath = Resolve-Path $path
-                Write-GiipLog 'INFO' ('Valid config loaded from: ' + $fullPath)
+                Write-GiipLog 'INFO' ('✅ Valid config loaded from: ' + $fullPath)
                 return $config
             }
             catch {
@@ -146,24 +116,18 @@ function Parse-ConfigFile {
     $config = @{}
     $lines = Get-Content -LiteralPath $Path
     foreach ($line in $lines) {
-        # Regex for 'Key = Value' or 'Key = "Value"' format
-        if ($line -match '^\s*([^#=;]+)\s*=\s*"?([^"]*)"?') {
-            $key = $Matches[1].Trim()
-            $val = $Matches[2].Trim()
-            if ($key) { $config[$key] = $val }
+        # Regex for 'Key = "Value"' format
+        if ($line -match '^\s*(\w+)\s*=\s*"([^"]*)"') {
+            $key = $Matches[1]
+            $val = $Matches[2]
+            $config[$key] = $val
         }
     }
     
     # Minimal Validation
     if (-not $config.ContainsKey('sk')) { throw "Config missing 'sk' (Security Token)." }
     if (-not $config.ContainsKey('lssn')) { throw "Config missing 'lssn' (Logical Server Serial Number)." }
-    
-    # Support both 'apiaddrv2' and legacy 'api_url'
-    if ($config.ContainsKey('api_url') -and -not $config.ContainsKey('apiaddrv2')) {
-        $config['apiaddrv2'] = $config['api_url']
-    }
-    
-    if (-not $config.ContainsKey('apiaddrv2')) { throw "Config missing 'apiaddrv2' or 'api_url' (API Endpoint)." }
+    if (-not $config.ContainsKey('apiaddrv2')) { throw "Config missing 'apiaddrv2' (API Endpoint)." }
     
     return $config
 }
@@ -273,7 +237,7 @@ function Invoke-GiipApiV2 {
         # JSON 응답 파싱 시도
         try {
             $response = $webResponse.Content | ConvertFrom-Json
-            Write-Host "[DEBUG] JSON Parse SUCCESS" -ForegroundColor Green
+            Write-Host "[DEBUG] ✅ JSON Parse SUCCESS" -ForegroundColor Green
             
             # 파싱된 JSON 구조 출력
             if ($response) {
@@ -297,7 +261,7 @@ function Invoke-GiipApiV2 {
             $hasError = $response | Select-Object -ExpandProperty error -ErrorAction SilentlyContinue
             
             if ($hasError) {
-                Write-Host "[DEBUG] API returned error response (Detected via Select-Object)" -ForegroundColor Red
+                Write-Host "[DEBUG] ❌ API returned error response (Detected via Select-Object)" -ForegroundColor Red
                 try {
                     $errJson = $response.error | ConvertTo-Json -Depth 5 -Compress
                     Write-Host "[DEBUG] Error details: $errJson" -ForegroundColor Red
@@ -319,7 +283,7 @@ function Invoke-GiipApiV2 {
                 # Check if this is a single-record SP response (has Proc_MSG in data[0])
                 # or a multi-record list response
                 if ($response.data[0].Proc_MSG) {
-                    Write-Host "[DEBUG] Unwrapping giipApiSk2 response structure (data[0])" -ForegroundColor Yellow
+                    Write-Host "[DEBUG] 🔧 Unwrapping giipApiSk2 response structure (data[0])" -ForegroundColor Yellow
                     $unwrapped = $response.data[0]
                     Write-Host "[DEBUG] Unwrapped RstVal: $($unwrapped.RstVal)" -ForegroundColor Cyan
                     Write-Host "[DEBUG] Unwrapped RstMsg: $($unwrapped.RstMsg)" -ForegroundColor Cyan
@@ -327,12 +291,12 @@ function Invoke-GiipApiV2 {
                 }
                 # If single-item array with RstVal (SP response), auto-unwrap for compatibility
                 elseif ($response.data.Count -eq 1 -and $response.data[0].RstVal) {
-                    Write-Host "[DEBUG] Auto-unwrapping single SP response (data[0])" -ForegroundColor Yellow
+                    Write-Host "[DEBUG] 🔧 Auto-unwrapping single SP response (data[0])" -ForegroundColor Yellow
                     return $response.data[0]
                 }
                 # Multi-record list
                 else {
-                    Write-Host "[DEBUG] Returning full data array (list response)" -ForegroundColor Yellow
+                    Write-Host "[DEBUG] 🔧 Returning full data array (list response)" -ForegroundColor Yellow
                     Write-Host "[DEBUG] Array Count: $($response.data.Count)" -ForegroundColor Cyan
                     return @{ data = $response.data }
                 }
@@ -342,7 +306,7 @@ function Invoke-GiipApiV2 {
         }
         catch {
             # JSON 파싱 실패 - 상세 정보 출력
-            Write-Host "[DEBUG] JSON Parse FAILED" -ForegroundColor Red
+            Write-Host "[DEBUG] ❌ JSON Parse FAILED" -ForegroundColor Red
             Write-Host "[DEBUG] Parse Error: $($_.Exception.Message)" -ForegroundColor Red
             Write-Host "[DEBUG] Full Response Content:" -ForegroundColor Red
             Write-Host $webResponse.Content -ForegroundColor Gray
@@ -370,7 +334,7 @@ function Invoke-GiipApiV2 {
     }
     catch {
         # HTTP 요청 자체가 실패한 경우
-        Write-Host "[DEBUG] HTTP Request FAILED" -ForegroundColor Red
+        Write-Host "[DEBUG] ❌ HTTP Request FAILED" -ForegroundColor Red
         Write-Host "[DEBUG] Error Type: $($_.Exception.GetType().Name)" -ForegroundColor Red
         Write-Host "[DEBUG] Error Message: $($_.Exception.Message)" -ForegroundColor Red
         

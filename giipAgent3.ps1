@@ -4,10 +4,8 @@
 # Architecture: Stateless, Non-Admin, JSON Communication.
 # ============================================================================
 
-Write-Host "[Trace] Initializing paths..."
 $ErrorActionPreference = "Stop"
-$ScriptDir = $PSScriptRoot
-if (-not $ScriptDir) { $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent }
+$ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
 $Global:BaseDir = $ScriptDir
 $ModuleDir = Join-Path $ScriptDir "giipscripts\modules"
 $DataDir = Join-Path $ScriptDir "data"
@@ -15,31 +13,17 @@ $QueueFile = Join-Path $DataDir "queue.json"
 $LibDir = Join-Path $ScriptDir "lib"
 
 # Load Common for logging
-Write-Host "[Trace] Loading Common.ps1..."
 try {
     . (Join-Path $LibDir "Common.ps1")
-    Write-Host "[Trace] Common.ps1 loaded."
 }
 catch { 
     Write-Host "Warning: Common lib not loaded. ($_)" 
-}
-
-# 1. Log Cleanup (Maintenance)
-Write-Host "[Trace] Starting Log Cleanup..."
-try {
-    . (Join-Path $LibDir "LogCleanup.ps1")
-    Start-LogCleanup -Days 7
-    Write-Host "[Trace] Log Cleanup finished."
-}
-catch {
-    Write-Host "Warning: Log cleanup failed. ($_)"
 }
 
 if (-not (Get-Command "Write-GiipLog" -ErrorAction SilentlyContinue)) {
     function Write-GiipLog { param($Level, $Message) Write-Host "[$Level] $Message" }
 }
 
-Write-Host "[Trace] Final initialization complete."
 Write-GiipLog "INFO" "=== giipAgent3.ps1 Started ==="
 
 # 2. Clean State (Module Call)
@@ -75,40 +59,12 @@ if (Test-Path $QueueFile) {
         if (-not [string]::IsNullOrWhiteSpace($scriptBody)) {
             Write-GiipLog "INFO" "Executing Task Script..."
             
-            # Determine Script Type
-            $scriptType = if ($taskData.script_type) { $taskData.script_type } else { "ps1" }
-            $extension = ".ps1"
-            if ($scriptType -match "py|python") { $extension = ".py" }
-            elseif ($scriptType -match "sh|bash") { $extension = ".sh" }
-            elseif ($scriptType -match "bat|cmd") { $extension = ".bat" }
-
             # Save Temp Script
-            $tmpTask = Join-Path $env:TEMP "giip_task_$PID$extension"
-            # Python scripts on Windows might need UTF8 NoBOM or ASCII? PowerShell Set-Content defaults to UTF8 (with BOM in older versions) or UTF8NoBOM (PowerShell Core).
-            # Python 3 handles BOM usually fine, but safer to use ASCII if pure code or UTF8.
+            $tmpTask = Join-Path $env:TEMP "giip_task_$PID.ps1"
             $scriptBody | Set-Content -Path $tmpTask -Encoding UTF8
             
-            Write-GiipLog "INFO" "Script Type: $scriptType, Temp File: $tmpTask"
-
-            # Execute based on type
-            if ($extension -eq ".py") {
-                python $tmpTask
-            }
-            elseif ($extension -eq ".sh") {
-                if (Get-Command "bash" -ErrorAction SilentlyContinue) {
-                    bash $tmpTask
-                } else {
-                    Write-GiipLog "WARN" "Bash not found, trying sh..."
-                    sh $tmpTask
-                }
-            }
-            elseif ($extension -eq ".bat") {
-                cmd /c $tmpTask
-            }
-            else {
-                # PowerShell
-                & $tmpTask
-            }
+            # Execute
+            & $tmpTask
             
             Write-GiipLog "INFO" "Task Execution Completed."
             
@@ -150,25 +106,11 @@ if (Test-Path $hostConnScript) {
     & $hostConnScript
 }
 
-# 8. Process List Monitoring (New)
-$processListScript = Join-Path $ModuleDir "ProcessList.ps1"
-if (Test-Path $processListScript) {
-    Write-GiipLog "INFO" "[Step 8] Running Process List..."
-    & $processListScript
-}
-
-# 9. DB User List Monitoring (Net3D)
+# 8. DB User List Monitoring (Net3D)
 $dbUserListScript = Join-Path $ModuleDir "DbUserList.ps1"
 if (Test-Path $dbUserListScript) {
-    Write-GiipLog "INFO" "[Step 9] Checking DB User List Requests..."
+    Write-GiipLog "INFO" "[Step 7] Checking DB User List Requests..."
     & $dbUserListScript
-}
-
-# 10. Full Query Sync (New)
-$syncFullQueryScript = Join-Path $ModuleDir "SyncFullQuery.ps1"
-if (Test-Path $syncFullQueryScript) {
-    Write-GiipLog "INFO" "[Step 10] Running Full Query Sync..."
-    & $syncFullQueryScript
 }
 
 Write-GiipLog "INFO" "=== giipAgent3.ps1 Completed ==="
