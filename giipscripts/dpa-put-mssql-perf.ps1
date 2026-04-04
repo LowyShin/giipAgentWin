@@ -70,7 +70,7 @@ try {
   Write-Host "[INFO] Collected Data: $finalJson"
 
   # 2. API 전송: MdbStatsUpdate
-  $apiText = "MdbStatsUpdate"
+  $apiText = "MdbStatsUpdate mdb_id uptime threads qps buffer_pool cpu memory"
   $apiEndpoint = $KVSConfig['Endpoint']
   if (-not $apiEndpoint -and $KVSConfig['apiaddrv2']) { $apiEndpoint = $KVSConfig['apiaddrv2'] }
   if ($KVSConfig['FunctionCode']) { $apiEndpoint += "?code=$($KVSConfig['FunctionCode'])" }
