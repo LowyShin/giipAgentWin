@@ -1,6 +1,7 @@
 # GIIP Agent Configuration Files (CONTAINS SECRETS!)
 # Never commit these files with actual credentials
-giipAgent.cfg
+# giipAgent.cfg (TRACKED AS SAMPLE - DO NOT ADD REAL KEYS HERE)
+
 *.cfg.local
 *.cfg.prod
 *.cfg.backup
