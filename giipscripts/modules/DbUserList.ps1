@@ -107,17 +107,16 @@ try {
 
                     if ($userList.Count -gt 0) {
                         # Upload to Net3dUserListPut
-                        $ulPayload = @{
+                        # MANDATE: Use sufficient -Depth to prevent 'S' (System.Collections...) error
+                        $jsonPayload = @{
                             mdb_id    = $mdb_id
                             lssn      = $Config.lssn
                             user_list = $userList
-                        } | ConvertTo-Json -Depth 5 -Compress
+                        } | ConvertTo-Json -Depth 10 -Compress
 
-                        # Workaround for 'jsondata' keyword bug in giipApiSk2 engine (NN' syntax error)
-                        # We use a custom key to trigger property replacement instead of broken keyword replacement
-                        $wrapPayload = @{ jsondata_fixed = $ulPayload } | ConvertTo-Json -Compress
                         Write-GiipLog "INFO" ("[DbUserList] Sending user_list for mdb_id=$mdb_id, host=$dbHost (MSSQL)")
-                        Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata_fixed" -JsonData $wrapPayload | Out-Null
+                        # Use standard 'jsondata' parameter as now supported/fixed in Sk3
+                        Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata" -JsonData $jsonPayload | Out-Null
                         Write-GiipLog "INFO" ("[DbUserList] Data uploaded for {0} (Success)" -f $dbHost)
                     }
                 }
@@ -173,17 +172,16 @@ ORDER BY User;
 
                     if ($userList.Count -gt 0) {
                         # Upload to Net3dUserListPut
-                        $ulPayload = @{
+                        # MANDATE: Use sufficient -Depth to prevent 'S' (System.Collections...) error
+                        $jsonPayload = @{
                             mdb_id    = $mdb_id
                             lssn      = $Config.lssn
                             user_list = $userList
-                        } | ConvertTo-Json -Depth 5 -Compress
+                        } | ConvertTo-Json -Depth 10 -Compress
 
-                        # Workaround for 'jsondata' keyword bug in giipApiSk2 engine (NN' syntax error)
-                        # We use a custom key to trigger property replacement instead of broken keyword replacement
-                        $wrapPayload = @{ jsondata_fixed = $ulPayload } | ConvertTo-Json -Compress
                         Write-GiipLog "INFO" ("[DbUserList] Sending user_list for mdb_id=$mdb_id, host=$dbHost (MySQL)")
-                        Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata_fixed" -JsonData $wrapPayload | Out-Null
+                        # Use standard 'jsondata' parameter as now supported/fixed in Sk3
+                        Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata" -JsonData $jsonPayload | Out-Null
                         Write-GiipLog "INFO" ("[DbUserList] Data uploaded for {0} (Success)" -f $dbHost)
                     }
                 }

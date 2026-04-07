@@ -1,6 +1,8 @@
-# ============================================================================
 # giipAgentWin Library: Common Functions
 # Purpose: Configuration, Logging, and Standard API V2 Interaction
+# ============================================================================
+# 👉 MANDATORY: Read SPEC_AGENT_API_INTEGRITY_MANDATE.md before modification.
+# Agent MUST protect API (Sk2/Sk3) integrity by ensuring valid data transmission.
 # ============================================================================
 
 #region ====== Logging & Constants ======
