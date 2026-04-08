@@ -1,5 +1,5 @@
 # ============================================================================
-# giipAgentWin Library: Common Functions (Ultra-Robust Pure ASCII)
+# giipAgentWin Library: Common Functions (Ultra-Robust UTF8 Version)
 # Purpose: Configuration, Logging, and Resilient API V2 Interaction
 # ============================================================================
 
@@ -19,7 +19,7 @@ function Write-GiipLog {
         $LogDir = Join-Path $LogBase $LOG_DIR_REL
         if (-not (Test-Path -LiteralPath $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
         $LogFile = Join-Path $LogDir ("giipAgentWin_{0}.log" -f (Get-Date -Format 'yyyyMMdd'))
-        Add-Content -LiteralPath $LogFile -Value $line -Encoding ASCII -ErrorAction SilentlyContinue
+        Add-Content -LiteralPath $LogFile -Value $line -Encoding utf8 -ErrorAction SilentlyContinue
     } catch {}
 }
 
@@ -31,20 +31,6 @@ function Get-StringMd5 {
     $hash = $md5.ComputeHash($bytes)
     return "0x" + ($hash | ForEach-Object { $_.ToString("x2") } | Join-String -Separator "")
 }
-
-function Import-MySqlDll {
-    param([string]$LibDir)
-    $dllPaths = @(
-        Join-Path $LibDir "MySql.Data.dll",
-        "C:\Program Files\MySQL\MySQL Connector Net 8.0.33\Assemblies\v4\MySql.Data.dll"
-    )
-    foreach ($path in $dllPaths) {
-        if (Test-Path $path) {
-            try { [void][System.Reflection.Assembly]::LoadFrom($path); return $true } catch {}
-        }
-    }
-    return $false
-}
 #endregion
 
 #region ====== Configuration ======
@@ -55,7 +41,7 @@ function Get-GiipConfig {
     foreach ($path in $candidates) {
         if (Test-Path $path) {
             $config = @{}
-            $lines = Get-Content -LiteralPath $path -Encoding ASCII
+            $lines = Get-Content -LiteralPath $path -Encoding utf8
             foreach ($line in $lines) {
                 if ($line -match '^\s*(\w+)\s*=\s*"([^"]*)"') { $config[$Matches[1]] = $Matches[2] }
             }
@@ -82,14 +68,19 @@ function Invoke-GiipApiV2 {
         
         # [ULTRA-ROBUST] Handle JSON parsing with fallback to RegEx for RstVal if parsing fails
         try {
+            # Try parsing the whole response
             $response = $rawContent | ConvertFrom-Json
             if ($response.data -and $response.data.Count -gt 0) { return $response.data[0] }
             return $response
         } catch {
-            # If server returns invalid JSON (escape sequence error), attempt emergency extraction of RstVal
+            # EMERGENCY: If server returns invalid JSON (e.g. escape sequence error in debug info),
+            # manually extract RstVal and RstMsg using RegEx.
             $rstVal = "500"
+            $rstMsg = "JSON Parsing Failed"
             if ($rawContent -match '"RstVal"\s*:\s*(\d+)') { $rstVal = $Matches[1] }
-            return @{ RstVal = $rstVal; RstMsg = "JSON Parsing Error (Partial Success likely). Content: $rawContent" }
+            if ($rawContent -match '"RstMsg"\s*:\s*"([^"]+)"') { $rstMsg = $Matches[1] }
+            
+            return @{ RstVal = $rstVal; RstMsg = "[RegEx Recovery] $rstMsg" }
         }
     } catch {
         return @{ RstVal = "500"; RstMsg = "[Invoke] Connection Exception: $($_.Exception.Message)" }
