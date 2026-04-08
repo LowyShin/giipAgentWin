@@ -48,3 +48,4 @@ function Start-LogCleanup {
         Write-Host "[LogCleanup] Error during cleanup: $_"
     }
 }
+

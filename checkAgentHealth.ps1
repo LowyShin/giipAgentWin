@@ -7,7 +7,7 @@
 $config = Get-GiipConfig
 $lssn = $config.lssn
 
-Write-Host "🔍 Starting Windows Agent Self-Diagnostic for LSSN: $lssn..."
+Write-Host " Starting Windows Agent Self-Diagnostic for LSSN: $lssn..."
 
 $checklist = @{
     check_time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -49,4 +49,5 @@ $jsonBody = $checklist | ConvertTo-Json -Compress
 $reportData = @{kType = "lssn"; kKey = "$lssn"; kFactor = "agent_health_checklist"; kValue = $jsonBody } | ConvertTo-Json -Compress
 Invoke-GiipApiV2 -Config $config -CommandText "KVSPut kType kKey kFactor" -JsonData $reportData
 
-Write-Host "✅ Self-diagnostic completed with status: $($checklist.status)"
+Write-Host " Self-diagnostic completed with status: $($checklist.status)"
+

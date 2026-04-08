@@ -50,12 +50,13 @@ try {
         -Severity "debug"
 
     if ($eSn) {
-        Write-Host "✅ SUCCESS: Error log created successfully! (eSn: $eSn)" -ForegroundColor Green
+        Write-Host " SUCCESS: Error log created successfully! (eSn: $eSn)" -ForegroundColor Green
     }
     else {
-        Write-Host "❌ FAILED: sendErrorLog returned null." -ForegroundColor Red
+        Write-Host " FAILED: sendErrorLog returned null." -ForegroundColor Red
     }
 }
 catch {
-    Write-Host "❌ EXCEPTION: $_" -ForegroundColor Red
+    Write-Host " EXCEPTION: $_" -ForegroundColor Red
 }
+

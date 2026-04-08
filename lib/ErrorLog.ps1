@@ -1,5 +1,5 @@
 # sendErrorLog.ps1
-# Purpose: Windows Agent용 에러 로그 전송 표준 함수
+# Purpose: Windows Agent     
 # Author: AI Agent
 # Date: 2025-12-29
 #
@@ -8,8 +8,8 @@
 #   sendErrorLog -Config $Config -Message "Upload failed" -Data $errorData -Severity "error"
 #
 # References:
-#   - API 사양: giipdb/docs/ERROR_LOG_API_SPECIFICATION.md
-#   - JSON 표준: giipdb/docs/ERRORLOG_JSON_PARSE_STANDARD.md
+#   - API : giipdb/docs/ERROR_LOG_API_SPECIFICATION.md
+#   - JSON : giipdb/docs/ERRORLOG_JSON_PARSE_STANDARD.md
 
 function sendErrorLog {
     [CmdletBinding()]
@@ -32,13 +32,13 @@ function sendErrorLog {
     )
     
     try {
-        # JSON 변환 시도 (3단계 fallback)
+        # JSON   (3 fallback)
         $jsonData = $null
         $isValidJson = $false
         
         if ($null -ne $Data) {
             try {
-                # [V] Exception 객체인 경우 상세 정보 추출
+                # [V] Exception     
                 if ($Data -is [System.Exception]) {
                     $Data = @{
                         Message        = $Data.Message
@@ -48,10 +48,10 @@ function sendErrorLog {
                     }
                 }
 
-                # Step 1: ConvertTo-Json 시도
+                # Step 1: ConvertTo-Json 
                 $jsonData = $Data | ConvertTo-Json -Depth 10 -Compress
                 
-                # JSON 유효성 검증 (간단한 체크)
+                # JSON   ( )
                 if ($jsonData.StartsWith('{') -or $jsonData.StartsWith('[')) {
                     $isValidJson = $true
                 }
@@ -59,19 +59,19 @@ function sendErrorLog {
             catch {
                 Write-GiipLog "WARN" "JSON conversion failed: $_"
                 
-                # Step 2: ToString() 시도
+                # Step 2: ToString() 
                 try {
                     $jsonData = $Data.ToString()
                 }
                 catch {
-                    # Step 3: 강제 문자열 변환
+                    # Step 3:   
                     $jsonData = [string]$Data
                 }
                 $isValidJson = $false
             }
         }
         
-        # 에러 로그 페이로드 생성
+        #    
         $payload = @{
             source       = "giipAgent"
             errorMessage = $Message
@@ -82,33 +82,33 @@ function sendErrorLog {
             $payload.errorType = $ErrorType
         }
         
-        # JSON이 유효하면 requestData에, 아니면 서버가 RawData로 처리
+        # JSON  requestData,   RawData 
         if ($isValidJson) {
             $payload.requestData = $jsonData
         }
         else {
-            # JSON 파싱 실패 시에도 전송 (서버가 elRawData에 저장)
+            # JSON     ( elRawData )
             $payload.requestData = $jsonData
             if (-not $ErrorType) {
                 $payload.errorType = "DataSerializationError"
             }
         }
         
-        # [V] 로그 레벨 필터링: error 또는 critical인 경우에만 실제 API 호출 수행
-        # 디버그성 내용이 DB 에러로그 테이블을 오염시키는 것을 방지합니다.
+        # [V]   : error  critical   API  
+        #   DB     .
         if ($Severity -notin @('error', 'critical')) {
             Write-GiipLog "INFO" "Logging skipped for severity '$Severity' (Local only): $Message"
             return "skipped"
         }
 
-        # API 호출
+        # API 
         $logJson = $payload | ConvertTo-Json -Depth 5 -Compress
-        # [V] API 호출 (giipapi_rules.md L27 표준 준수)
+        # [V] API  (giipapi_rules.md L27  )
         $response = Invoke-GiipApiV2 -Config $Config `
             -CommandText "ErrorLogCreate source errorMessage" `
             -JsonData $logJson
         
-        # 응답 검증
+        #  
         if (-not $response) {
             Write-GiipLog "ERROR" "ErrorLog API returned null response"
             return $null
@@ -144,10 +144,11 @@ function sendErrorLog {
         return $response.eSn
     }
     catch {
-        # 에러 로깅 자체가 실패해도 스크립트는 계속 진행
+        #       
         Write-GiipLog "ERROR" "Send-GiipErrorLog failed: $_"
         return $null
     }
 }
+
 
 

@@ -54,3 +54,4 @@ if (Test-Path $LogDir) {
 
 Write-Host "Clean state completed."
 exit 0
+

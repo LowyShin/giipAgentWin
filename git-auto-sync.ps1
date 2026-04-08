@@ -1,24 +1,24 @@
 <#
 .SYNOPSIS
-    GitHub 자동 동기화 스크립트 - Pull-Only (Windows 버전)
+    GitHub    - Pull-Only (Windows )
 
 .DESCRIPTION
-    GitHub에서 변경사항을 자동으로 풀하는 읽기 전용 스크립트입니다.
-    공개 저장소용 - 로컬 변경사항은 Push하지 않음 (보안)
+    GitHub      .
+      -   Push  ()
 
 .NOTES
     Version: 1.0.0 (Pull-Only)
     Author: GIIP Team
     Last Updated: 2025-10-29
-    Security: 로컬 변경사항은 자동 커밋/푸시 하지 않음
+    Security:    /  
 
 .EXAMPLE
     .\git-auto-sync.ps1
-    현재 디렉토리에서 Git 동기화 실행
+      Git  
 
 .EXAMPLE
     .\git-auto-sync.ps1 -RepoPath "C:\giipAgent"
-    특정 경로에서 Git 동기화 실행
+      Git  
 #>
 
 [CmdletBinding()]
@@ -27,7 +27,7 @@ param(
 )
 
 # ============================================================
-# 설정
+# 
 # ============================================================
 $ErrorActionPreference = "Continue"
 $LOG_DIR = "C:\giipAgent\logs"
@@ -35,7 +35,7 @@ $LOG_FILE = Join-Path $LOG_DIR "git_auto_sync_$(Get-Date -Format 'yyyyMMdd').log
 $HOSTNAME = $env:COMPUTERNAME
 
 # ============================================================
-# 로그 함수
+#  
 # ============================================================
 function Write-Log {
     param([string]$Message)
@@ -45,7 +45,7 @@ function Write-Log {
     
     Write-Host $logMessage
     
-    # 로그 디렉토리 생성
+    #   
     if (-not (Test-Path $LOG_DIR)) {
         New-Item -ItemType Directory -Path $LOG_DIR -Force | Out-Null
     }
@@ -54,7 +54,7 @@ function Write-Log {
 }
 
 # ============================================================
-# 시작
+# 
 # ============================================================
 Write-Log "=========================================="
 Write-Log "Git Auto-Sync v1.0.0 (Pull-Only) Started"
@@ -62,18 +62,18 @@ Write-Log "Repository: $RepoPath"
 Write-Log "Hostname: $HOSTNAME"
 Write-Log "=========================================="
 
-# Git 저장소 확인
+# Git  
 if (-not (Test-Path (Join-Path $RepoPath ".git"))) {
     Write-Log "ERROR: Not a git repository: $RepoPath"
     exit 1
 }
 
-# 디렉토리 이동
+#  
 Set-Location $RepoPath
 Write-Log "Changed directory to: $RepoPath"
 
 # ============================================================
-# Git 사용자 설정 확인
+# Git   
 # ============================================================
 $gitUserName = git config user.name
 $gitUserEmail = git config user.email
@@ -87,7 +87,7 @@ if ([string]::IsNullOrWhiteSpace($gitUserName) -or [string]::IsNullOrWhiteSpace(
 }
 
 # ============================================================
-# 현재 브랜치 확인 및 전환 (giipAgent.cfg에서 읽기)
+#      (giipAgent.cfg )
 # ============================================================
 # Default branch
 $targetBranch = "real"
@@ -144,10 +144,10 @@ if ($LASTEXITCODE -ne 0) {
     Write-Log "ERROR: git fetch failed"
     exit 1
 }
-Write-Log "✓ Fetch completed successfully"
+Write-Log " Fetch completed successfully"
 
 # ============================================================
-# Step 1: 로컬 변경사항 경고 (Push하지 않음)
+# Step 1:    (Push )
 # ============================================================
 Write-Log "=========================================="
 Write-Log "Step 1: Checking local changes..."
@@ -155,12 +155,12 @@ Write-Log "=========================================="
 
 $changedFiles = git status --porcelain
 if ($changedFiles) {
-    Write-Log "⚠ WARNING: Local changes detected (will NOT be pushed - Read-Only Mode):"
+    Write-Log " WARNING: Local changes detected (will NOT be pushed - Read-Only Mode):"
     $changedFiles -split "`n" | ForEach-Object { Write-Log "  $_" }
     Write-Log ""
-    Write-Log "⚠ SECURITY NOTICE: This is a public repository."
-    Write-Log "⚠ Local changes will be stashed before pull to prevent conflicts."
-    Write-Log "⚠ To commit changes, please use manual git workflow."
+    Write-Log " SECURITY NOTICE: This is a public repository."
+    Write-Log " Local changes will be stashed before pull to prevent conflicts."
+    Write-Log " To commit changes, please use manual git workflow."
     Write-Log ""
     
     Write-Log "Stashing local changes..."
@@ -168,7 +168,7 @@ if ($changedFiles) {
     git stash save $stashMessage 2>&1 | ForEach-Object { Write-Log "  $_" }
     
     if ($LASTEXITCODE -eq 0) {
-        Write-Log "✓ Local changes stashed successfully"
+        Write-Log " Local changes stashed successfully"
         Write-Log "To recover: git stash list && git stash pop"
         $stashed = $true
     }
@@ -178,7 +178,7 @@ if ($changedFiles) {
     }
 }
 else {
-    Write-Log "✓ No local changes detected"
+    Write-Log " No local changes detected"
     $stashed = $false
 }
 
@@ -196,13 +196,13 @@ Write-Log "Local commit:  $localHash"
 Write-Log "Remote commit: $remoteHash"
 
 if ($localHash -ne $remoteHash) {
-    Write-Log "⚠ Remote changes detected, pulling..."
+    Write-Log " Remote changes detected, pulling..."
     
     Write-Log "Pulling from origin/$currentBranch..."
     git pull origin $currentBranch 2>&1 | ForEach-Object { Write-Log "  $_" }
     
     if ($LASTEXITCODE -eq 0) {
-        Write-Log "✓ Pull succeeded"
+        Write-Log " Pull succeeded"
         $newHash = git rev-parse HEAD
         Write-Log "Updated to commit: $newHash"
         
@@ -222,7 +222,7 @@ if ($localHash -ne $remoteHash) {
     }
 }
 else {
-    Write-Log "✓ Already up to date with remote"
+    Write-Log " Already up to date with remote"
 }
 
 # ============================================================
@@ -241,19 +241,19 @@ if ($stashed) {
     Write-Log "To discard stashed changes:"
     Write-Log "  git stash drop"
     Write-Log ""
-    Write-Log "⚠ NOTE: This is a public repository."
-    Write-Log "⚠ Do NOT commit sensitive information."
+    Write-Log " NOTE: This is a public repository."
+    Write-Log " Do NOT commit sensitive information."
 }
 
 # ============================================================
-# 완료
+# 
 # ============================================================
 Write-Log "=========================================="
 Write-Log "Git Auto-Sync (Pull-Only) Completed"
 Write-Log "=========================================="
 Write-Log ""
 
-# 최종 상태 출력
+#   
 Write-Log "Final Status:"
 Write-Log "  Branch: $currentBranch"
 Write-Log "  Commit: $(git rev-parse --short HEAD)"
@@ -270,6 +270,7 @@ else {
 }
 
 Write-Log ""
-Write-Log "✓ Sync completed successfully (Pull-Only Mode)"
+Write-Log " Sync completed successfully (Pull-Only Mode)"
 
 exit 0
+

@@ -69,10 +69,10 @@ try {
     Write-Host "=== FINAL RESULT ===" -ForegroundColor Cyan
     
     if ($null -eq $response) {
-        Write-Host "❌ FAILED: Response is NULL" -ForegroundColor Red
+        Write-Host " FAILED: Response is NULL" -ForegroundColor Red
     }
     elseif ($response.RstVal -eq "200") {
-        Write-Host "✅ SUCCESS: Data sent successfully!" -ForegroundColor Green
+        Write-Host " SUCCESS: Data sent successfully!" -ForegroundColor Green
         Write-Host "   RstVal: $($response.RstVal)" -ForegroundColor Green
         Write-Host "   RstMsg: $($response.RstMsg)" -ForegroundColor Green
         if ($response.ksn) {
@@ -80,15 +80,16 @@ try {
         }
     }
     else {
-        Write-Host "❌ FAILED: Non-200 response" -ForegroundColor Red
+        Write-Host " FAILED: Non-200 response" -ForegroundColor Red
         Write-Host "   RstVal: $($response.RstVal)" -ForegroundColor Red
         Write-Host "   RstMsg: $($response.RstMsg)" -ForegroundColor Red
     }
 }
 catch {
-    Write-Host "❌ EXCEPTION: $_" -ForegroundColor Red
+    Write-Host " EXCEPTION: $_" -ForegroundColor Red
     Write-Host $_.ScriptStackTrace -ForegroundColor Gray
 }
 
 Write-Host ""
 Write-Host "=== Test Complete ===" -ForegroundColor Cyan
+

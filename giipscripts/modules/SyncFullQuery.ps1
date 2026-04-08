@@ -63,3 +63,4 @@ foreach ($db in $dbList) {
 }
 
 exit 0
+

@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-  Azure SQL Server 성능(QPS, CPU, Memory 등) 수집 후 MdbStatsUpdate API로 전송
+  Azure SQL Server (QPS, CPU, Memory )   MdbStatsUpdate API 
 .DESCRIPTION
-  - pAgentMdbPerfCollect 저장 프로시저를 실행하여 실시간 QPS 및 성능 지표를 수집
-  - 수집된 JSON 데이터를 giipfaw API (pApiMdbStatsUpdatebySK)로 전송
+  - pAgentMdbPerfCollect     QPS    
+  -  JSON  giipfaw API (pApiMdbStatsUpdatebySK) 
 .PARAMETER SqlConnectionString
-  Azure SQL Server 연결 문자열
+  Azure SQL Server  
 .PARAMETER MdbId
-  Managed Database ID (GIIP 상의 ID)
+  Managed Database ID (GIIP  ID)
 .EXAMPLE
   .\dpa-put-mssql-perf.ps1 -SqlConnectionString "Server=...;" -MdbId 101
 #>
@@ -17,12 +17,12 @@ param(
   [int]$MdbId
 )
 
-# 기본 설정 로드 (giipAgent.cfg)
-# ⚠️⚠️⚠️ DO NOT MODIFY THIS PATH ⚠️⚠️⚠️
+#    (giipAgent.cfg)
+#  DO NOT MODIFY THIS PATH 
 # Path: ../..giipAgent.cfg (PARENT of repository root)
 # DO NOT change to: ../giipAgent.cfg or ./giipAgent.cfg
 # WHY? giipAgentWin/giipAgent.cfg is a SAMPLE with 'YOUR_LSSN'!
-$AgentRoot = Join-Path $PSScriptRoot '..\..'  # giipAgentWin의 상위 디렉토리
+$AgentRoot = Join-Path $PSScriptRoot '..\..'  # giipAgentWin  
 $KVSConfig = @{}
 $cfgPath = Join-Path $PSScriptRoot '..\..\giipAgent.cfg'
 if (Test-Path -LiteralPath $cfgPath) {
@@ -37,7 +37,7 @@ if (Test-Path -LiteralPath $cfgPath) {
   }
 }
 
-# 파라미터 우선 적용
+#   
 if (-not $SqlConnectionString -and $KVSConfig['SqlConnectionString']) {
   $SqlConnectionString = $KVSConfig['SqlConnectionString']
 }
@@ -50,7 +50,7 @@ if (-not $SqlConnectionString -or -not $MdbId) {
   exit 1
 }
 
-# 1. SQL 실행: pAgentMdbPerfCollect (JSON 반환)
+# 1. SQL : pAgentMdbPerfCollect (JSON )
 try {
   $query = "EXEC pAgentMdbPerfCollect"
   $jsonResult = Invoke-Sqlcmd -ConnectionString $SqlConnectionString -Query $query -MaxCharLength 1000000 | Select-Object -ExpandProperty Column1
@@ -60,16 +60,16 @@ try {
     exit 1
   }
 
-  # JSON 파싱하여 mdb_id 주입
+  # JSON  mdb_id 
   $perfData = $jsonResult | ConvertFrom-Json
   $perfData.mdb_id = $MdbId
   
-  # 다시 JSON으로 변환
+  #  JSON 
   $finalJson = $perfData | ConvertTo-Json -Compress
 
   Write-Host "[INFO] Collected Data: $finalJson"
 
-  # 2. API 전송: MdbStatsUpdate
+  # 2. API : MdbStatsUpdate
   $apiText = "MdbStatsUpdate mdb_id uptime threads qps buffer_pool cpu memory"
   $apiEndpoint = $KVSConfig['Endpoint']
   if (-not $apiEndpoint -and $KVSConfig['apiaddrv2']) { $apiEndpoint = $KVSConfig['apiaddrv2'] }
@@ -96,3 +96,4 @@ catch {
   Write-Error "SQL Execution Failed: $($_.Exception.Message)"
   exit 1
 }
+

@@ -1,19 +1,19 @@
 <#
 .SYNOPSIS
-  Azure SQL Server 연결 현황 및 부하, 쿼리 요청 정보를 수집하여 KVS에 업로드
+  Azure SQL Server    ,     KVS 
 .DESCRIPTION
-  - 현재 머신(호스트명)에서 연결된 Azure SQL Server의 부하(세션/CPU/메모리 등)와
-    연결된 각 클라이언트(머신)별로 최근 쿼리 요청 내역을 수집
-  - 결과를 JSON으로 변환하여 giipAgent.cfg 기반 KVS로 업로드
+  -  ()  Azure SQL Server (/CPU/ )
+      ()     
+  -  JSON  giipAgent.cfg  KVS 
 .PARAMETER SqlConnectionString
-  Azure SQL Server 연결 문자열
+  Azure SQL Server  
 .PARAMETER KFactor
-  KVS 업로드 시 factor 값(기본값: 'sqlnetinv')
+  KVS   factor (: 'sqlnetinv')
 .EXAMPLE
   .\Collect-SqlNetInventory.ps1 -SqlConnectionString "Server=...;User Id=...;Password=...;..."
 .NOTES
-  - giipAgent.cfg에서 KVSConfig를 읽어옴
-  - PowerShell 7+ 필요 (SqlClient 사용)
+  - giipAgent.cfg KVSConfig 
+  - PowerShell 7+  (SqlClient )
 #>
 [CmdletBinding()]
 param(
@@ -21,8 +21,8 @@ param(
   [string]$KFactor = 'sqlnetinv'
 )
 
-# KVSConfig 및 SqlConnectionString 로드 (giipAgent.cfg)
-# ⚠️⚠️⚠️ DO NOT MODIFY THIS PATH ⚠️⚠️⚠️
+# KVSConfig  SqlConnectionString  (giipAgent.cfg)
+#  DO NOT MODIFY THIS PATH 
 # DO NOT change to: ../giipAgent.cfg or ./giipAgent.cfg
 $KVSConfig = @{}
 $cfgPath = Join-Path $PSScriptRoot '..\..\giipAgent.cfg'
@@ -43,13 +43,13 @@ if (Test-Path -LiteralPath $cfgPath) {
   }
 }
 if (-not $SqlConnectionString) {
-  Write-Host "[ERROR] SqlConnectionString 파라미터 또는 giipAgent.cfg에 SqlConnectionString 항목이 필요합니다."; exit 2
+  Write-Host "[ERROR] SqlConnectionString   giipAgent.cfg SqlConnectionString  ."; exit 2
 }
 
-# 호스트명
+# 
 $hostName = $env:COMPUTERNAME
 
-# MySQL 프로세스/세션/쿼리 정보 쿼리
+# MySQL //  
 
 $query = @"
 SELECT
@@ -70,12 +70,12 @@ LEFT JOIN performance_schema.events_statements_current es
 WHERE t.PROCESSLIST_USER IS NOT NULL
 "@
 
-# MySQL 연결 및 쿼리 실행 (MySql.Data 사용)
+# MySQL     (MySql.Data )
 try {
   Add-Type -Path "C:\Program Files\MySQL\MySQL Connector Net 8.0.33\Assemblies\v4\MySql.Data.dll"
 }
 catch {
-  Write-Host "[ERROR] MySql.Data.dll 로드 실패. MySQL Connector/NET 설치 필요."; exit 1 
+  Write-Host "[ERROR] MySql.Data.dll  . MySQL Connector/NET  ."; exit 1 
 }
 
 $conn = New-Object MySql.Data.MySqlClient.MySqlConnection($SqlConnectionString)
@@ -99,10 +99,10 @@ try {
   $conn.Close()
 }
 catch {
-  Write-Host "[ERROR] MySQL 쿼리 실행 실패: $($_.Exception.Message)"; exit 2 
+  Write-Host "[ERROR] MySQL   : $($_.Exception.Message)"; exit 2 
 }
 
-# 집계: 호스트별 연결/부하/쿼리
+# :  //
 $grouped = $results | Group-Object host_name | ForEach-Object {
   [PSCustomObject]@{
     host_name = $_.Name
@@ -111,7 +111,7 @@ $grouped = $results | Group-Object host_name | ForEach-Object {
   }
 }
 
-# 전체 부하 요약
+#   
 $summary = [PSCustomObject]@{
   collected_at   = (Get-Date).ToString('s')
   collector_host = $hostName
@@ -131,11 +131,11 @@ Write-Host "[DIAG] Grouped hosts: $($grouped.Count)"
 Write-Host "[DIAG] JSON size (chars): $($json.Length)"
 Write-Host "[DIAG] JSON preview: $($json.Substring(0, [Math]::Min(400, $json.Length)))"
 
-# KVS 업로드 (show endpoint and payload)
+# KVS  (show endpoint and payload)
 if ($KVSConfig['Enabled'] -eq 'true') {
-  # Build apirule.md compliant request: text에는 필드명만, jsondata에는 실제 값
+  # Build apirule.md compliant request: text , jsondata  
   $kvspText = "KVSPut kType kKey kFactor"
-  # 직접 $summary를 JSON으로 변환 (value 래퍼 제거)
+  #  $summary JSON  (value  )
   $kvspJson = $summary | ConvertTo-Json -Depth 8 -Compress
 
   $postParams = [ordered]@{
@@ -153,14 +153,15 @@ if ($KVSConfig['Enabled'] -eq 'true') {
 
   try {
     $resp = Invoke-RestMethod -Method Post -Uri $endpoint -Body $bodyStr -ContentType 'application/x-www-form-urlencoded'
-    Write-Host "[INFO] KVS 업로드 결과: $resp"
+    Write-Host "[INFO] KVS  : $resp"
   }
   catch {
-    Write-Host "[ERROR] KVS 업로드 실패: $($_.Exception.Message)"
+    Write-Host "[ERROR] KVS  : $($_.Exception.Message)"
     Write-Host "[ERROR] Full request body length: $($bodyStr.Length)"
   }
 }
 else {
-  Write-Host "[INFO] KVS 업로드 비활성화. 결과 JSON:"
+  Write-Host "[INFO] KVS  .  JSON:"
   Write-Host $json
 }
+

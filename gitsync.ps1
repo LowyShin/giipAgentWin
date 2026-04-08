@@ -7,3 +7,4 @@ git add .
 git commit -m "auto sync from $hn"
 
 git push origin real
+

@@ -1,19 +1,19 @@
 <#
 .SYNOPSIS
-  Azure SQL Server 연결 현황 및 부하, 쿼리 요청 정보를 수집하여 KVS에 업로드
+  Azure SQL Server    ,     KVS 
 .DESCRIPTION
-  - 현재 머신(호스트명)에서 연결된 Azure SQL Server의 부하(세션/CPU/메모리 등)와
-    연결된 각 클라이언트(머신)별로 최근 쿼리 요청 내역을 수집
-  - 결과를 JSON으로 변환하여 giipAgent.cfg 기반 KVS로 업로드
+  -  ()  Azure SQL Server (/CPU/ )
+      ()     
+  -  JSON  giipAgent.cfg  KVS 
 .PARAMETER SqlConnectionString
-  Azure SQL Server 연결 문자열
+  Azure SQL Server  
 .PARAMETER KFactor
-  KVS 업로드 시 factor 값(기본값: 'sqlnetinv')
+  KVS   factor (: 'sqlnetinv')
 .EXAMPLE
   .\Collect-SqlNetInventory.ps1 -SqlConnectionString "Server=...;User Id=...;Password=...;..."
 .NOTES
-  - giipAgent.cfg에서 KVSConfig를 읽어옴
-  - PowerShell 7+ 필요 (SqlClient 사용)
+  - giipAgent.cfg KVSConfig 
+  - PowerShell 7+  (SqlClient )
 #>
 [CmdletBinding()]
 param(
@@ -21,8 +21,8 @@ param(
   [string]$KFactor = 'sqlnetinv'
 )
 
-# KVSConfig 및 SqlConnectionString 로드 (giipAgent.cfg)
-# ⚠️⚠️⚠️ DO NOT MODIFY THIS PATH ⚠️⚠️⚠️
+# KVSConfig  SqlConnectionString  (giipAgent.cfg)
+#  DO NOT MODIFY THIS PATH 
 # Path: ../..giipAgent.cfg (PARENT of repository root)
 # DO NOT change to: ../giipAgent.cfg or ./giipAgent.cfg
 # WHY? giipAgentWin/giipAgent.cfg is a SAMPLE with 'YOUR_LSSN'!
@@ -44,7 +44,7 @@ if (Test-Path -LiteralPath $cfgPath) {
     $SqlConnectionString = $KVSConfig['SqlConnectionString']
   }
   
-  # KType, KKey 기본값 설정
+  # KType, KKey  
   if (-not $KVSConfig['KType']) {
     $KVSConfig['KType'] = 'lssn'
   }
@@ -62,21 +62,21 @@ if (Test-Path -LiteralPath $cfgPath) {
   }
 }
 if (-not $SqlConnectionString) {
-  Write-Host "[ERROR] SqlConnectionString 파라미터 또는 giipAgent.cfg에 SqlConnectionString 항목이 필요합니다."; exit 2
+  Write-Host "[ERROR] SqlConnectionString   giipAgent.cfg SqlConnectionString  ."; exit 2
 }
 
-# SQL Server에서 세션/부하/쿼리 정보 수집
+# SQL Server //  
 try {
   Import-Module SqlServer -ErrorAction Stop
 }
 catch {
-  Write-Host "[ERROR] SqlServer 모듈 필요. Install-Module SqlServer -Scope CurrentUser 로 설치하세요."; exit 1 
+  Write-Host "[ERROR] SqlServer  . Install-Module SqlServer -Scope CurrentUser  ."; exit 1 
 }
 
-# 호스트명
+# 
 $hostName = $env:COMPUTERNAME
 
-# 세션/부하/쿼리 정보 쿼리 (예시)
+# //   ()
 
 $query = @"
 SET NOCOUNT ON;
@@ -122,7 +122,7 @@ WHERE
 
 $results = Invoke-Sqlcmd -ConnectionString $SqlConnectionString -Query $query
 
-# 집계: IP별 연결/부하/쿼리/트랜잭션
+# : IP ///
 $grouped = $results | Group-Object client_net_address | ForEach-Object {
   [PSCustomObject]@{
     client_net_address = $_.Name
@@ -132,7 +132,7 @@ $grouped = $results | Group-Object client_net_address | ForEach-Object {
   }
 }
 
-# 전체 부하 요약
+#   
 $summary = [PSCustomObject]@{
   collected_at   = (Get-Date).ToString('s')
   collector_host = $hostName
@@ -152,13 +152,13 @@ Write-Host "[DIAG] Grouped hosts: $($grouped.Count)"
 Write-Host "[DIAG] JSON size (chars): $($json.Length)"
 Write-Host "[DIAG] JSON preview: $($json.Substring(0, [Math]::Min(400, $json.Length)))"
 
-# KVS 업로드 (show endpoint and payload)
+# KVS  (show endpoint and payload)
 if ($KVSConfig['Enabled'] -eq 'true') {
-  # Build apirule.md compliant request: text에는 파라미터 이름만, jsondata에 실제 값
-  # NOTE: kValue는 text에 포함하지 않음 (jsondata 전체로 전달됨)
+  # Build apirule.md compliant request: text  , jsondata  
+  # NOTE: kValue text   (jsondata  )
   $kvspText = "KVSPut kType kKey kFactor"
   
-  # jsondata에 모든 값 포함
+  # jsondata   
   $kvspJsonData = @{
     kType   = $KVSConfig['KType']
     kKey    = $KVSConfig['KKey']
@@ -181,14 +181,15 @@ if ($KVSConfig['Enabled'] -eq 'true') {
 
   try {
     $resp = Invoke-RestMethod -Method Post -Uri $endpoint -Body $bodyStr -ContentType 'application/x-www-form-urlencoded'
-    Write-Host "[INFO] KVS 업로드 결과: $resp"
+    Write-Host "[INFO] KVS  : $resp"
   }
   catch {
-    Write-Host "[ERROR] KVS 업로드 실패: $($_.Exception.Message)"
+    Write-Host "[ERROR] KVS  : $($_.Exception.Message)"
     Write-Host "[ERROR] Full request body length: $($bodyStr.Length)"
   }
 }
 else {
-  Write-Host "[INFO] KVS 업로드 비활성화. 결과 JSON:"
+  Write-Host "[INFO] KVS  .  JSON:"
   Write-Host $json
 }
+

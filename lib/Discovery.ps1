@@ -87,3 +87,4 @@ function Invoke-Discovery {
         Save-ExecutionLog -Config $Config -EventType "error" -DetailsObj @{ type = "discovery"; msg = $_.Exception.Message }
     }
 }
+

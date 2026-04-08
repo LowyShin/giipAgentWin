@@ -28,7 +28,7 @@ foreach ($file in $allFiles) {
         $null = [System.Management.Automation.PSParser]::Tokenize($content, [ref]$errors)
         
         if ($errors -and $errors.Count -gt 0) {
-            Write-Host " ❌ FAILED" -ForegroundColor Red
+            Write-Host "  FAILED" -ForegroundColor Red
             $errorFiles += @{
                 File = $relativePath
                 Errors = $errors
@@ -38,11 +38,11 @@ foreach ($file in $allFiles) {
             }
         }
         else {
-            Write-Host " ✓" -ForegroundColor Green
+            Write-Host " " -ForegroundColor Green
         }
     }
     catch {
-        Write-Host " ⚠️ WARNING" -ForegroundColor Yellow
+        Write-Host "  WARNING" -ForegroundColor Yellow
         Write-Host "  Could not parse file: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
@@ -62,6 +62,7 @@ if ($errorFiles.Count -gt 0) {
 }
 else {
     Write-Host ""
-    Write-Host "✓ All PowerShell files have valid syntax!" -ForegroundColor Green
+    Write-Host " All PowerShell files have valid syntax!" -ForegroundColor Green
     exit 0
 }
+

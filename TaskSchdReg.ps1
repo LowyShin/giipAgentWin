@@ -27,3 +27,4 @@ $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interac
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force
 
 Write-Host "Task '$taskName' registered successfully to run every 5 minutes." -ForegroundColor Green
+

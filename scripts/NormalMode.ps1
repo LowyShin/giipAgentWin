@@ -12,7 +12,7 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
 $BaseDir = Split-Path -Path $ScriptDir -Parent
 $LibDir = Join-Path $BaseDir "lib"
-# ⚠️⚠️⚠️ DO NOT MODIFY THIS PATH ⚠️⚠️⚠️
+#  DO NOT MODIFY THIS PATH 
 # Config file is in PARENT of repository root
 $ConfigFile = Join-Path $BaseDir "../giipAgent.cfg" # Parent of Repository Root
 
@@ -102,3 +102,4 @@ else {
 Save-ExecutionLog -Config $Config -EventType "shutdown" -DetailsObj @{ mode = "normal"; status = "ok" }
 Write-GiipLog "INFO" "Normal Mode Completed."
 exit 0
+

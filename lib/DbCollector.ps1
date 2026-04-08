@@ -75,11 +75,11 @@ function Get-GiipDbMetrics {
             $reader.Close()
             $conn.Close()
             
-            Write-GiipLog "DEBUG" "[DbCollector] ✅ Successfully collected metrics for DB $mdb_id"
+            Write-GiipLog "DEBUG" "[DbCollector]  Successfully collected metrics for DB $mdb_id"
             return $stat
         }
         catch {
-            Write-GiipLog "WARN" "[DbCollector] ❌ MSSQL Connection failed for DB ${mdb_id} ($dbHost): $($_.Exception.Message)"
+            Write-GiipLog "WARN" "[DbCollector]  MSSQL Connection failed for DB ${mdb_id} ($dbHost): $($_.Exception.Message)"
             return $null
         }
     }
@@ -129,7 +129,7 @@ function Get-GiipDbMetrics {
                 }
                 $conn.Close()
                 
-                Write-GiipLog "DEBUG" "[DbCollector] ✅ Successfully collected metrics for DB $mdb_id (MySQL)"
+                Write-GiipLog "DEBUG" "[DbCollector]  Successfully collected metrics for DB $mdb_id (MySQL)"
                 return $stat
             }
             catch {
@@ -147,3 +147,4 @@ function Get-GiipDbMetrics {
         return $null
     }
 }
+

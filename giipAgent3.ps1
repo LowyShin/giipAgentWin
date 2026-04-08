@@ -1,32 +1,20 @@
 # ============================================================================
-# giipAgent3.ps1 (Windows Orchestrator)
-# Purpose: Main entry point. Calls independent modules sequentially.
-# Architecture: Stateless, Non-Admin, JSON Communication.
+# giipAgent3.ps1 (Windows Orchestrator - Pure English Version)
+# Purpose: Main entry point for giipAgentWin.
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
 $Global:BaseDir = $ScriptDir
 $ModuleDir = Join-Path $ScriptDir "giipscripts\modules"
-$DataDir = Join-Path $ScriptDir "data"
-$QueueFile = Join-Path $DataDir "queue.json"
 $LibDir = Join-Path $ScriptDir "lib"
 
-# Load Common for logging
+# Load Library
 try {
     . (Join-Path $LibDir "Common.ps1")
-}
-catch { 
-    Write-Host "Warning: Common lib not loaded. ($_)" 
-}
-
-# 1. Log Cleanup (Maintenance)
-try {
-    . (Join-Path $LibDir "LogCleanup.ps1")
-    Start-LogCleanup -Days 7
-}
-catch {
-    Write-Host "Warning: Log cleanup failed. ($_)"
+} catch { 
+    Write-Host "FATAL: Failed to load Common library. ($_)"
+    exit 1
 }
 
 if (-not (Get-Command "Write-GiipLog" -ErrorAction SilentlyContinue)) {
@@ -35,134 +23,34 @@ if (-not (Get-Command "Write-GiipLog" -ErrorAction SilentlyContinue)) {
 
 Write-GiipLog "INFO" "=== giipAgent3.ps1 Started ==="
 
-# 2. Clean State (Module Call)
+# 1. Clean State
 $cleanScript = Join-Path $ModuleDir "CleanState.ps1"
 if (Test-Path $cleanScript) {
     Write-GiipLog "INFO" "[Step 1] Cleaning state..."
     & $cleanScript
 }
-else {
-    Write-GiipLog "ERROR" "CleanState module not found: $cleanScript"
-    exit 1
-}
 
-# 3. CQE Get (Module Call)
+# 2. Cqe Get
 $cqeScript = Join-Path $ModuleDir "CqeGet.ps1"
 if (Test-Path $cqeScript) {
-    Write-GiipLog "INFO" "[Step 2] Fetching CQE Queue..."
+    Write-GiipLog "INFO" "[Step 2] Fetching Queue..."
     & $cqeScript
 }
-else {
-    Write-GiipLog "ERROR" "CqeGet module not found: $cqeScript"
-    exit 1
-}
 
-# 4. Check & Execute
-if (Test-Path $QueueFile) {
-    Write-GiipLog "INFO" "[Step 3] Task found in $QueueFile. Processing..."
-    
-    try {
-        $taskData = Get-Content -Path $QueueFile -Raw | ConvertFrom-Json
-        $scriptBody = $taskData.ms_body
-        
-        if (-not [string]::IsNullOrWhiteSpace($scriptBody)) {
-            Write-GiipLog "INFO" "Executing Task Script..."
-            
-            # Determine Script Type
-            $scriptType = if ($taskData.script_type) { $taskData.script_type } else { "ps1" }
-            $extension = ".ps1"
-            if ($scriptType -match "py|python") { $extension = ".py" }
-            elseif ($scriptType -match "sh|bash") { $extension = ".sh" }
-            elseif ($scriptType -match "bat|cmd") { $extension = ".bat" }
-
-            # Save Temp Script
-            $tmpTask = Join-Path $env:TEMP "giip_task_$PID$extension"
-            # Python scripts on Windows might need UTF8 NoBOM or ASCII? PowerShell Set-Content defaults to UTF8 (with BOM in older versions) or UTF8NoBOM (PowerShell Core).
-            # Python 3 handles BOM usually fine, but safer to use ASCII if pure code or UTF8.
-            $scriptBody | Set-Content -Path $tmpTask -Encoding UTF8
-            
-            Write-GiipLog "INFO" "Script Type: $scriptType, Temp File: $tmpTask"
-
-            # Execute based on type
-            if ($extension -eq ".py") {
-                python $tmpTask
-            }
-            elseif ($extension -eq ".sh") {
-                if (Get-Command "bash" -ErrorAction SilentlyContinue) {
-                    bash $tmpTask
-                } else {
-                    Write-GiipLog "WARN" "Bash not found, trying sh..."
-                    sh $tmpTask
-                }
-            }
-            elseif ($extension -eq ".bat") {
-                cmd /c $tmpTask
-            }
-            else {
-                # PowerShell
-                & $tmpTask
-            }
-            
-            Write-GiipLog "INFO" "Task Execution Completed."
-            
-            # Cleanup Temp
-            if (Test-Path $tmpTask) { Remove-Item $tmpTask -Force }
-        }
-        else {
-            Write-GiipLog "WARN" "Queue file exists but 'ms_body' is empty."
-        }
-    }
-    catch {
-        Write-GiipLog "ERROR" "Failed to process task: $_"
-    }
-}
-else {
-    Write-GiipLog "INFO" "[Step 3] No task to execute."
-}
-
-# 5. DB Monitoring (Module Call)
-# Runs as independent module, collects and sends DB stats
+# 3. DB Monitor
 $dbMonitorScript = Join-Path $ModuleDir "DbMonitor.ps1"
 if (Test-Path $dbMonitorScript) {
-    Write-GiipLog "INFO" "[Step 4] Running DB Monitor..."
+    Write-GiipLog "INFO" "[Step 3] Running DB Monitor..."
     & $dbMonitorScript
 }
 
-
-# 6. DB Connection Monitoring (Net3D) -> Rename/Keep logic
-$dbConnScript = Join-Path $ModuleDir "DbConnectionList.ps1"
-if (Test-Path $dbConnScript) {
-    Write-GiipLog "INFO" "[Step 5] Running DB Connection List (Net3D)..."
-    & $dbConnScript
-}
-
-# 7. Host Connection (Netstat) Monitoring (Net3D)
-$hostConnScript = Join-Path $ModuleDir "HostConnectionList.ps1"
-if (Test-Path $hostConnScript) {
-    Write-GiipLog "INFO" "[Step 6] Running Host Connection List (Net3D)..."
-    & $hostConnScript
-}
-
-# 8. Process List Monitoring (New)
+# 4. Process List
 $processListScript = Join-Path $ModuleDir "ProcessList.ps1"
 if (Test-Path $processListScript) {
-    Write-GiipLog "INFO" "[Step 8] Running Process List..."
+    Write-GiipLog "INFO" "[Step 4] Running Process List..."
     & $processListScript
-}
-
-# 9. DB User List Monitoring (Net3D)
-$dbUserListScript = Join-Path $ModuleDir "DbUserList.ps1"
-if (Test-Path $dbUserListScript) {
-    Write-GiipLog "INFO" "[Step 9] Checking DB User List Requests..."
-    & $dbUserListScript
-}
-
-# 10. Full Query Sync (New)
-$syncFullQueryScript = Join-Path $ModuleDir "SyncFullQuery.ps1"
-if (Test-Path $syncFullQueryScript) {
-    Write-GiipLog "INFO" "[Step 10] Running Full Query Sync..."
-    & $syncFullQueryScript
 }
 
 Write-GiipLog "INFO" "=== giipAgent3.ps1 Completed ==="
 exit 0
+
