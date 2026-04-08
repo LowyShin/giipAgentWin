@@ -125,11 +125,12 @@ try {
         if ($SqlSessionMap.Count -gt 0) {
             $key = "$($conn.RemoteAddress):$($conn.RemotePort)"
             if ($SqlSessionMap.ContainsKey($key)) {
+                $session = $SqlSessionMap[$key]
                 # Verify local port matches to ensure we aren't matching a different service
-                if ($conn.LocalPort -eq $SqlSessionMap[$key].localPort) {
-                    $qHash = $SqlSessionMap[$key].hash
-                    $sqlHandle = $SqlSessionMap[$key].sql_handle
-                    $planHandle = $SqlSessionMap[$key].plan_handle
+                if ($conn.LocalPort -eq $session["localPort"]) {
+                    $qHash = if ($session.ContainsKey("hash")) { $session["hash"] } else { "" }
+                    $sqlHandle = if ($session.ContainsKey("sql_handle")) { $session["sql_handle"] } else { "" }
+                    $planHandle = if ($session.ContainsKey("plan_handle")) { $session["plan_handle"] } else { "" }
                 }
             }
         }
