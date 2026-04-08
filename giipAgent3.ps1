@@ -9,11 +9,17 @@ $Global:BaseDir = $ScriptDir
 $ModuleDir = Join-Path $ScriptDir "giipscripts\modules"
 $LibDir = Join-Path $ScriptDir "lib"
 
-# Load Library
+# Load Libraries
 try {
     . (Join-Path $LibDir "Common.ps1")
 } catch { 
     Write-Host "FATAL: Failed to load Common library. ($_)"
+    exit 1
+}
+try {
+    . (Join-Path $LibDir "KVS.ps1")
+} catch {
+    Write-Host "FATAL: Failed to load KVS library. ($_)"
     exit 1
 }
 
