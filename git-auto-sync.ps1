@@ -103,7 +103,7 @@ foreach ($configPath in $configPaths) {
     if (Test-Path $configPath) {
         Write-Log "Found config file: $configPath"
         $configContent = Get-Content $configPath -ErrorAction SilentlyContinue
-        $branchLine = $configContent | Where-Object { $_ -match '^\s*branch\s*=' }
+        $branchLine = $configContent | Where-Object { $_ -match '^\s*branch\s*=' } | Select-Object -Last 1
         if ($branchLine) {
             $configBranch = ($branchLine -split '=')[1].Trim().Trim('"')
             if ($configBranch) {
