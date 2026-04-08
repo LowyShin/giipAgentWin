@@ -1,7 +1,6 @@
 # ============================================================================
-# CleanState.ps1
-# Purpose: Delete previous state files (JSON) and old log files to ensure a clean start.
-# Usage: .\CleanState.ps1
+# CleanState.ps1 (Restored Pure ASCII Version)
+# Purpose: Delete previous state files and old logs for a clean start.
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
@@ -25,10 +24,10 @@ foreach ($file in $targets) {
     if (Test-Path $path) {
         try {
             Remove-Item -Path $path -Force
-            Write-Host "  Deleted: $file" -ForegroundColor Green
+            Write-Host "  Deleted: $file"
         }
         catch {
-            Write-Host "  Failed to delete: $file ($($_.Exception.Message))" -ForegroundColor Red
+            Write-Host "  Failed to delete: $file ($($_.Exception.Message))"
         }
     }
 }
@@ -44,14 +43,13 @@ if (Test-Path $LogDir) {
             $_.LastWriteTime -lt $cutoffDate
         } | ForEach-Object {
             Remove-Item $_.FullName -Force
-            Write-Host "  Deleted old log: $($_.Name)" -ForegroundColor Yellow
+            Write-Host "  Deleted old log: $($_.Name)"
         }
     }
     catch {
-        Write-Host "  Warning: Failed to clean some log files ($($_.Exception.Message))" -ForegroundColor Yellow
+        Write-Host "  Warning: Failed to clean some log files ($($_.Exception.Message))"
     }
 }
 
 Write-Host "Clean state completed."
 exit 0
-
