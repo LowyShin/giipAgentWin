@@ -101,175 +101,67 @@ $configPaths = @(
 
 foreach ($configPath in $configPaths) {
     if (Test-Path $configPath) {
-        Write-Log "Found config file: $configPath"
-        $configContent = Get-Content $configPath -ErrorAction SilentlyContinue
-        $branchLine = $configContent | Where-Object { $_ -match '^\s*branch\s*=' } | Select-Object -Last 1
-        if ($branchLine) {
-            $configBranch = ($branchLine -split '=')[1].Trim().Trim('"')
-            if ($configBranch) {
-                $targetBranch = $configBranch
-                Write-Log "Using branch from config: $targetBranch"
+        Write-Log "Checking config: $configPath"
+        $config = Get-Content $configPath
+        foreach ($line in $config) {
+            if ($line -match "^branch\s*=\s*`"(.+)`"") {
+                $targetBranch = $matches[1]
+                Write-Log "Found target branch in config: $targetBranch"
                 break
             }
         }
+        if ($targetBranch) { break }
     }
 }
 
-Write-Log "Target branch: $targetBranch"
-$currentBranch = git rev-parse --abbrev-ref HEAD 2>$null
+Write-Log "Target Branch: $targetBranch"
+
+# 현재 브랜치 확인
+$currentBranch = git rev-parse --abbrev-ref HEAD
+Write-Log "Current Branch: $currentBranch"
 
 if ($currentBranch -ne $targetBranch) {
-    Write-Log "Current branch is '$currentBranch'. Switching to '$targetBranch'..."
-    git fetch origin $targetBranch 2>&1 | ForEach-Object { Write-Log "  $_" }
-    git checkout $targetBranch 2>&1 | ForEach-Object { Write-Log "  $_" }
+    Write-Log "Switching to branch: $targetBranch"
     
+    # 로컬 변경사항 확인
+    $status = git status --porcelain
+    if ($status) {
+        Write-Log "WARNING: Local changes detected. Stashing changes..."
+        git stash | Out-Null
+    }
+    
+    git checkout $targetBranch
     if ($LASTEXITCODE -ne 0) {
-        Write-Log "ERROR: Failed to checkout '$targetBranch'. Please check manually."
-        exit 1
-    }
-    $currentBranch = $targetBranch
-}
-
-Write-Log "Current branch: $currentBranch"
-
-# ============================================================
-# Step 0: Fetch remote changes
-# ============================================================
-Write-Log "=========================================="
-Write-Log "Step 0: Fetching remote changes..."
-Write-Log "=========================================="
-
-git fetch origin 2>&1 | ForEach-Object { Write-Log "  $_" }
-if ($LASTEXITCODE -ne 0) {
-    Write-Log "ERROR: git fetch failed"
-    exit 1
-}
-Write-Log "✓ Fetch completed successfully"
-
-# ============================================================
-# Step 1: 로컬 변경사항 경고 (Push하지 않음)
-# ============================================================
-Write-Log "=========================================="
-Write-Log "Step 1: Checking local changes..."
-Write-Log "=========================================="
-
-$changedFiles = git status --porcelain
-if ($changedFiles) {
-    Write-Log "⚠ WARNING: Local changes detected (will NOT be pushed - Read-Only Mode):"
-    $changedFiles -split "`n" | ForEach-Object { Write-Log "  $_" }
-    Write-Log ""
-    Write-Log "⚠ SECURITY NOTICE: This is a public repository."
-    Write-Log "⚠ Local changes will be stashed before pull to prevent conflicts."
-    Write-Log "⚠ To commit changes, please use manual git workflow."
-    Write-Log ""
-    
-    Write-Log "Stashing local changes..."
-    $stashMessage = "Auto-stash before pull at $(Get-Date -Format 'yyyy-MM-dd HH:MM:ss') on $HOSTNAME"
-    git stash save $stashMessage 2>&1 | ForEach-Object { Write-Log "  $_" }
-    
-    if ($LASTEXITCODE -eq 0) {
-        Write-Log "✓ Local changes stashed successfully"
-        Write-Log "To recover: git stash list && git stash pop"
-        $stashed = $true
-    }
-    else {
-        Write-Log "ERROR: Failed to stash local changes"
+        Write-Log "ERROR: Failed to switch to branch $targetBranch"
         exit 1
     }
 }
-else {
-    Write-Log "✓ No local changes detected"
-    $stashed = $false
-}
 
 # ============================================================
-# Step 2: Pull remote changes
+# 업데이트 수행 (Pull)
 # ============================================================
-Write-Log "=========================================="
-Write-Log "Step 2: Checking remote changes..."
-Write-Log "=========================================="
+Write-Log "Fetching changes from origin..."
+git fetch origin $targetBranch
 
 $localHash = git rev-parse HEAD
-$remoteHash = git rev-parse "origin/$currentBranch"
-
-Write-Log "Local commit:  $localHash"
-Write-Log "Remote commit: $remoteHash"
+$remoteHash = git rev-parse "origin/$targetBranch"
 
 if ($localHash -ne $remoteHash) {
-    Write-Log "⚠ Remote changes detected, pulling..."
+    Write-Log "New changes detected. Updating..."
     
-    Write-Log "Pulling from origin/$currentBranch..."
-    git pull origin $currentBranch 2>&1 | ForEach-Object { Write-Log "  $_" }
+    # Pull 실행 (이미 checkout 상태임)
+    git pull origin $targetBranch
     
     if ($LASTEXITCODE -eq 0) {
-        Write-Log "✓ Pull succeeded"
-        $newHash = git rev-parse HEAD
-        Write-Log "Updated to commit: $newHash"
-        
-        # Show what changed
-        Write-Log "Changes pulled:"
-        git log --oneline "$localHash..$newHash" 2>&1 | ForEach-Object { Write-Log "  $_" }
-    }
-    else {
-        Write-Log "ERROR: Pull failed"
-        
-        # Restore stashed changes if any
-        if ($stashed) {
-            Write-Log "Restoring stashed changes..."
-            git stash pop 2>&1 | ForEach-Object { Write-Log "  $_" }
-        }
+        Write-Log "Update successful: $localHash -> $remoteHash"
+    } else {
+        Write-Log "ERROR: Update failed"
         exit 1
     }
-}
-else {
-    Write-Log "✓ Already up to date with remote"
-}
-
-# ============================================================
-# Step 3: Stashed changes information
-# ============================================================
-if ($stashed) {
-    Write-Log "=========================================="
-    Write-Log "Step 3: Stashed changes information"
-    Write-Log "=========================================="
-    Write-Log "Your local changes are stashed and NOT pushed (Read-Only Mode)"
-    Write-Log "Stash list:"
-    git stash list | Select-Object -First 5 | ForEach-Object { Write-Log "  $_" }
-    Write-Log ""
-    Write-Log "To restore your changes:"
-    Write-Log "  git stash pop"
-    Write-Log "To discard stashed changes:"
-    Write-Log "  git stash drop"
-    Write-Log ""
-    Write-Log "⚠ NOTE: This is a public repository."
-    Write-Log "⚠ Do NOT commit sensitive information."
+} else {
+    Write-Log "Already up to date."
 }
 
-# ============================================================
-# 완료
-# ============================================================
 Write-Log "=========================================="
-Write-Log "Git Auto-Sync (Pull-Only) Completed"
+Write-Log "Git Auto-Sync Completed Successfully"
 Write-Log "=========================================="
-Write-Log ""
-
-# 최종 상태 출력
-Write-Log "Final Status:"
-Write-Log "  Branch: $currentBranch"
-Write-Log "  Commit: $(git rev-parse --short HEAD)"
-Write-Log "  Author: $(git log -1 --format='%an <%ae>')"
-Write-Log "  Date:   $(git log -1 --format='%cd')"
-Write-Log "  Message: $(git log -1 --format='%s')"
-
-if ($stashed) {
-    $stashCount = (git stash list | Measure-Object).Count
-    Write-Log "  Stashed: YES ($stashCount items)"
-}
-else {
-    Write-Log "  Stashed: NO"
-}
-
-Write-Log ""
-Write-Log "✓ Sync completed successfully (Pull-Only Mode)"
-
-exit 0
