@@ -41,7 +41,7 @@ GROUP BY d.name, d.database_id
         }
     }
     catch {
-        Write-GiipLog "WARN" "[DbCollector] Failed to collect metrics for $Type: $($_.Exception.Message)"
+        Write-GiipLog "WARN" "[DbCollector] Failed to collect metrics for ${Type}: $($_.Exception.Message)"
     }
     
     return $results
