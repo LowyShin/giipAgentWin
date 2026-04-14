@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # Test-PowerShellSyntax.ps1
 # Purpose: Validate PowerShell syntax across all .ps1 files
 # Usage: .\Test-PowerShellSyntax.ps1

@@ -1,4 +1,4 @@
-$hn = (Get-CimInstance -Class Win32_ComputerSystem).Name
+﻿$hn = (Get-CimInstance -Class Win32_ComputerSystem).Name
 
 git pull origin real
 

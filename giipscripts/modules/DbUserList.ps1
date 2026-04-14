@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # DbUserList.ps1
 # Purpose: Check for User List Collection requests and collect/upload data
 # Usage: .\DbUserList.ps1

@@ -1,4 +1,4 @@
-## Check for administrator privileges - Not required for User execution context
+﻿## Check for administrator privileges - Not required for User execution context
 # But needed for Register-ScheduledTask
 
 Write-Host "Re-registering Task Scheduler for giipAgent3.ps1 (5-min interval)..." -ForegroundColor Cyan

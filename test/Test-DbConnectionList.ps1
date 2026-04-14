@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # Test-DbConnectionList.ps1
 # Purpose: Standalone wrapper to test DbConnectionList module
 # Usage: .\Test-DbConnectionList.ps1

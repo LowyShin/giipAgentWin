@@ -1,4 +1,4 @@
-# test-debug-log.ps1
+﻿# test-debug-log.ps1
 # Debug Log Transmission Test Script
 
 $ErrorActionPreference = "Stop"

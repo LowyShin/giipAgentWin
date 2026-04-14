@@ -1,4 +1,4 @@
-# giipAgent Auto-Discovery Integration for Windows
+﻿# giipAgent Auto-Discovery Integration for Windows
 # Call this script periodically (every 5 minutes) from Task Scheduler
 # Example: schtasks /create /tn "GIIP Auto-Discovery" /tr "powershell.exe -File C:\path\to\giip-auto-discover.ps1" /sc minute /mo 5
 

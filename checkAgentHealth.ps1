@@ -1,4 +1,4 @@
-# checkAgentHealth.ps1
+﻿# checkAgentHealth.ps1
 # GIIP Windows Agent Self-Diagnostic Checklist
 
 # Use the built-in $PSScriptRoot

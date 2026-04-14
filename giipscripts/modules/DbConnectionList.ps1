@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # DbConnectionList.ps1
 # Purpose: Collect active client connections from managed databases (Net3D)
 # Usage: .\DbConnectionList.ps1
