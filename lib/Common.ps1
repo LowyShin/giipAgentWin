@@ -111,6 +111,12 @@ function Invoke-GiipApiV2 {
         
         if ($response.ak) { $Global:GiipSessionAK = $response.ak }
         
+        # Debug: Log non-success responses
+        if ($response.RstVal -and $response.RstVal -ne "200") {
+            $rawJson = $webResponse.Content
+            Write-GiipLog "DEBUG" "API Non-Success Response ($($response.RstVal)): $rawJson"
+        }
+        
         if ($response.data -and $response.data.Count -gt 0) { return $response.data[0] }
         return $response
     } catch {
