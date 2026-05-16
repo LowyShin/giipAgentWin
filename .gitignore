@@ -17,6 +17,8 @@ giipLogs/
 *.temp
 giipTmpScript.*
 discovery-output*.json
+data/
+logs/
 
 # OS Files
 .DS_Store
