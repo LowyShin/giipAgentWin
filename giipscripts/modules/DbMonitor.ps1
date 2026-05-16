@@ -58,13 +58,26 @@ foreach ($db in $dbList) {
         Write-GiipLog "DEBUG" "[DbMonitor] DB Object: $($db | ConvertTo-Json -Compress)"
         $stat = Get-GiipDbMetrics -DbInfo $db -LibDir $LibDir -Config $Config
         if ($stat) {
+            # Create a clean, strictly-typed payload for the API
+            $payload = [PSCustomObject]@{
+                mdb_id      = [int]$db.mdb_id
+                uptime      = [int]$stat.uptime
+                threads     = [int]$stat.threads_connected
+                qps         = [double]$stat.questions_per_sec
+                buffer_pool = [double]$stat.buffer_pool_usage
+                cpu         = [double]$stat.cpu_usage
+                memory      = [double]$stat.memory_usage
+                query_hash  = ""
+            }
+            
             $cmdText = "MdbStatsUpdate mdb_id uptime threads qps buffer_pool cpu memory query_hash"
-            $statJson = $stat | ConvertTo-Json -Compress
+            $statJson = $payload | ConvertTo-Json -Compress
             $response = Invoke-GiipApiV2 -Config $Config -CommandText $cmdText -JsonData $statJson
-            if ($response -and $response.RstVal -eq "200") {
+            
+            if ($response -and ($response.RstVal -eq "200" -or $response.RstVal -eq 200)) {
                 Write-GiipLog "INFO" "[DbMonitor] SUCCESS: DB $($db.mdb_id) metrics sent."
             } else {
-                Write-GiipLog "WARN" "[DbMonitor] FAILED: DB $($db.mdb_id) API error."
+                Write-GiipLog "WARN" "[DbMonitor] FAILED: DB $($db.mdb_id) API error. Response: $($response | ConvertTo-Json -Compress)"
             }
         }
     } catch {
