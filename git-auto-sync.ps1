@@ -4,9 +4,9 @@
 .DESCRIPTION
     로컬 변경사항을 보존하면서 원격 브랜치와 안전하게 동기화합니다.
 .NOTES
-    Version: 1.3.8 (Robust Logging)
+    Version: 1.3.9 (Fix Config Search Order & Default Branch)
     Author: GIIP Team
-    Last Updated: 2026-03-24
+    Last Updated: 2026-05-16
 #>
 
 [CmdletBinding()]
@@ -52,26 +52,42 @@ function Send-RemoteLog {
 }
 
 Write-Log "=========================================="
-Write-Log "Git Auto-Sync v1.3.8 (Safe Mode)"
+Write-Log "Git Auto-Sync v1.3.9 (Safe Mode)"
 Write-Log "Repository: $RepoPath"
 Write-Log "=========================================="
 
-# 2. 설정 파일 파싱
+# 2. 설정 파일 파싱 (Priority: Parent > UserProfile > RepoPath)
 function Find-Config {
     param($StartPath)
-    $curr = $StartPath
-    while ($null -ne $curr) {
-        $path = Join-Path $curr "giipAgent.cfg"
+    
+    # 1순위: 상위 디렉토리 (가장 권장되는 위치)
+    $parentDir = Split-Path $StartPath -Parent
+    if ($parentDir) {
+        $path = Join-Path $parentDir "giipAgent.cfg"
         if (Test-Path $path) { return $path }
-        $parent = Split-Path $curr -Parent
-        if ($parent -eq $curr -or [string]::IsNullOrWhiteSpace($parent)) { break }
-        $curr = $parent
     }
+
+    # 2순위: 사용자 홈 디렉토리
+    $userPath = Join-Path $env:USERPROFILE "giipAgent.cfg"
+    if (Test-Path $userPath) { return $userPath }
+
+    # 3순위: 현재 디렉토리 (가급적 피해야 함 - 샘플 파일이 있을 수 있음)
+    $localPath = Join-Path $StartPath "giipAgent.cfg"
+    if (Test-Path $localPath) {
+        # 샘플 파일인지 확인 (상단에 'SAMPLE' 문구가 있으면 무시)
+        $content = Get-Content $localPath -TotalCount 10 -ErrorAction SilentlyContinue
+        if ($content -match "SAMPLE") {
+            Write-Log "Ignoring sample config in repository folder." "DEBUG"
+            return $null
+        }
+        return $localPath
+    }
+    
     return $null
 }
 
-# Rule #23: Respect Config Value
-$targetBranch = "main" 
+# 기본 브랜치는 'real'입니다.
+$targetBranch = "real" 
 
 $configPath = Find-Config -StartPath $RepoPath
 if ($configPath) {
