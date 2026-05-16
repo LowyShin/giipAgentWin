@@ -1,6 +1,6 @@
 # ============================================================================
 # giipAgent Common Library (PowerShell)
-# Version: 1.07
+# Version: 1.08
 # Purpose: Shared utilities, Configuration, and API communication
 # ============================================================================
 
@@ -19,29 +19,34 @@ function Write-GiipLog {
 
 # Function: Load giipAgent Configuration
 function Get-GiipConfig {
-    param([string]$BaseDir)
+    param([string]$SearchBase)
     
-    if (-not $BaseDir) { $BaseDir = $PSScriptRoot }
+    # Use Global:BaseDir (set by giipAgent3.ps1) as default if SearchBase not provided
+    if (-not $SearchBase) { 
+        $SearchBase = if ($Global:BaseDir) { $Global:BaseDir } else { $PSScriptRoot }
+    }
+    
     $config = @{}
     $configPath = $null
     
-    # Priority 1: Parent
-    $parentDir = Split-Path $BaseDir -Parent
-    if ($parentDir) {
-        $path = Join-Path $parentDir "giipAgent.cfg"
-        if (Test-Path $path) { $configPath = $path }
-    }
+    # List of paths to check (Priority Order)
+    $checkPaths = @(
+        Join-Path (Split-Path $SearchBase -Parent) "giipAgent.cfg", # Parent of BaseDir
+        Join-Path $env:USERPROFILE "giipAgent.cfg",                 # User Profile
+        Join-Path $SearchBase "giipAgent.cfg"                      # Local (Last Resort)
+    )
     
-    # Priority 2: UserProfile
-    if (-not $configPath) {
-        $userPath = Join-Path $env:USERPROFILE "giipAgent.cfg"
-        if (Test-Path $userPath) { $configPath = $userPath }
-    }
-    
-    # Priority 3: Local
-    if (-not $configPath) {
-        $localPath = Join-Path $BaseDir "giipAgent.cfg"
-        if (Test-Path $localPath) { $configPath = $localPath }
+    foreach ($path in $checkPaths) {
+        if (Test-Path $path) {
+            # Standard "SAMPLE" check to avoid using the repository template
+            $contentHead = Get-Content $path -TotalCount 10 -ErrorAction SilentlyContinue
+            if ($contentHead -match "SAMPLE") {
+                # Skip sample config
+                continue
+            }
+            $configPath = $path
+            break
+        }
     }
     
     if ($configPath) {
@@ -83,6 +88,11 @@ function Invoke-GiipApiV2 {
     $effectiveToken = if ($Global:GiipSessionAK) { $Global:GiipSessionAK } else { $Config.sk }
     
     $Uri = $Config.apiaddrv2
+    if (-not $Uri) {
+        Write-GiipLog "ERROR" "API Address (apiaddrv2) missing in configuration."
+        return $null
+    }
+
     $Body = @{ token = $effectiveToken; text = $CommandText; jsondata = $JsonData }
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
@@ -107,6 +117,7 @@ function Invoke-GiipApiV2 {
         }
         return $response
     } catch {
+        Write-GiipLog "DEBUG" "API Call Failed: $_"
         return $null
     }
 }
