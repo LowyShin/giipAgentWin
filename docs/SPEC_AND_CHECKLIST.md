@@ -38,17 +38,22 @@ giipAgent의 핵심 기능 리스트 및 기술적 상세 사양입니다.
 
 # 코드 수정 및 배포 체크리스트 (Standard Checklist)
 
-## ✅ 설정 및 아키텍처
-- [ ] **외부 설정 우선**: `Find-Config` 또는 `Get-GiipConfig`에서 `..` (상위 디렉토리) 탐색이 1순위인가?
-- [ ] **샘플 파일 보호**: 소스 내의 `giipAgent.cfg`에 "SAMPLE" 문구가 있을 시 이를 실제 설정으로 읽지 않는가?
-- [ ] **기본 브랜치 준수**: `git-auto-sync.ps1` 내 `$targetBranch` 기본값이 `real`로 설정되어 있는가?
+## ⚠️ 0단계: 절대 금기 사항 (Absolute Prohibition)
+- [x] **AI는 `real` 브랜치에 직접 Push하지 않는다.** (운영 서버 보호)
+- [x] **AI는 임의로 브랜치를 전환하여 Push하지 않는다.** (작업은 오직 `main`에서 수행)
 
-## ✅ 기능 및 호환성
-- [ ] **PowerShell 문법**: `@@{` (X) -> `@{` (O) 해시테이블 문법을 정확히 사용했는가?
-- [ ] **로컬 변경사항 보호**: 동기화 전 `git stash`를 수행하여 사용자 수동 수정분을 보존하는가?
-- [ ] **환경 변수**: `$Global:BaseDir` 등 에이전트 루트 경로 변수가 올바르게 참조되는가?
+## 🔍 1단계: 코드 내용 검증 (Content Verification)
+- [x] **버전 확인**: `git-auto-sync.ps1`의 버전이 최신(현재 v1.3.9)이며 `Last Updated`가 오늘 날짜인가?
+- [x] **기본 브랜치 확인**: 코드 내 `$targetBranch = "real"`로 명시되어 있는가? (절대 `main`이 아님을 확인)
+- [x] **우선순위 확인**: `Find-Config` 함수에서 `Split-Path $StartPath -Parent` (상위 폴더) 탐색이 가장 먼저 실행되는가?
+- [x] **샘플 필터링**: 로컬 디렉토리의 `giipAgent.cfg` 탐색 시 "SAMPLE" 문구가 포함된 파일을 무시하는 로직이 작동하는가?
 
-## ✅ 보안 및 배포
-- [ ] **Token 노출 금지**: `sk` 등 비밀키 정보가 로그에 남거나 저장소에 Push되지 않는가?
-- [ ] **로컬 검증**: 배포 전 `.\giipAgent3.ps1` 실행을 통해 정상 종료(Exit 0)를 확인했는가?
-- [ ] **문서 현행화**: 기능 변경 시 `SPEC_AND_CHECKLIST.md`에 파일 및 함수 정보를 업데이트했는가?
+## 🛠 2단계: 기능 및 문법 검증 (Functional Test)
+- [x] **PowerShell 오타**: `@@{` 와 같은 해시테이블 문법 오류가 없는가?
+- [x] **로컬 실행**: `.\giipAgent3.bat` 또는 `.\gitautosync.bat`을 실행하여 `Exit code: 0`을 확인했는가?
+- [x] **로그 확인**: 실행 로그(`logs/`)에 타겟 브랜치가 `real`로 정확히 표시되는가?
+
+## 🚀 3단계: 배포 전 최종 체크 (Pre-Push Check)
+- [x] **Git Branch 확인**: `git branch` 명령으로 현재 위치가 `main`임을 확인했는가?
+- [x] **Git Status 확인**: 의도하지 않은 파일(예: `giipAgent.cfg` 등 비밀정보)이 포함되지 않았는가?
+- [x] **커밋 메시지**: 수정 사항과 준수한 사양(v1.3.9 등)을 메시지에 명시했는가?
