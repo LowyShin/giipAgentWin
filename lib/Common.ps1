@@ -1,6 +1,6 @@
 # ============================================================================
 # giipAgent Common Library (PowerShell)
-# Version: 1.08
+# Version: 1.09
 # Purpose: Shared utilities, Configuration, and API communication
 # ============================================================================
 
@@ -21,31 +21,32 @@ function Write-GiipLog {
 function Get-GiipConfig {
     param([string]$SearchBase)
     
-    # Use Global:BaseDir (set by giipAgent3.ps1) as default if SearchBase not provided
-    if (-not $SearchBase) { 
-        $SearchBase = if ($Global:BaseDir) { $Global:BaseDir } else { $PSScriptRoot }
-    }
-    
+    $base = if ($SearchBase) { $SearchBase } elseif ($Global:BaseDir) { $Global:BaseDir } else { $PSScriptRoot }
     $config = @{}
     $configPath = $null
     
-    # List of paths to check (Priority Order)
-    $checkPaths = @(
-        Join-Path (Split-Path $SearchBase -Parent) "giipAgent.cfg", # Parent of BaseDir
-        Join-Path $env:USERPROFILE "giipAgent.cfg",                 # User Profile
-        Join-Path $SearchBase "giipAgent.cfg"                      # Local (Last Resort)
-    )
+    # Priority 1: Parent directory
+    $parent = Split-Path -Path $base -Parent
+    if ($parent -and (Test-Path (Join-Path $parent "giipAgent.cfg"))) {
+        $candidate = Join-Path $parent "giipAgent.cfg"
+        $head = Get-Content $candidate -TotalCount 10 -ErrorAction SilentlyContinue
+        if ($head -notmatch "SAMPLE") { $configPath = $candidate }
+    }
     
-    foreach ($path in $checkPaths) {
-        if (Test-Path $path) {
-            # Standard "SAMPLE" check to avoid using the repository template
-            $contentHead = Get-Content $path -TotalCount 10 -ErrorAction SilentlyContinue
-            if ($contentHead -match "SAMPLE") {
-                # Skip sample config
-                continue
-            }
-            $configPath = $path
-            break
+    # Priority 2: User Profile
+    if (-not $configPath) {
+        $userPath = Join-Path $env:USERPROFILE "giipAgent.cfg"
+        if (Test-Path $userPath) {
+            $head = Get-Content $userPath -TotalCount 10 -ErrorAction SilentlyContinue
+            if ($head -notmatch "SAMPLE") { $configPath = $userPath }
+        }
+    }
+    
+    # Priority 3: Local Repository (Last Resort)
+    if (-not $configPath) {
+        $localPath = Join-Path $base "giipAgent.cfg"
+        if (Test-Path $localPath) {
+            $configPath = $localPath
         }
     }
     
@@ -84,7 +85,6 @@ function Invoke-GiipApiV2 {
         [Parameter(Mandatory)][string]$CommandText,
         [Parameter(Mandatory)][string]$JsonData
     )
-    # Use Global AK if present (AK/SK Persistence standard)
     $effectiveToken = if ($Global:GiipSessionAK) { $Global:GiipSessionAK } else { $Config.sk }
     
     $Uri = $Config.apiaddrv2
@@ -107,14 +107,9 @@ function Invoke-GiipApiV2 {
         $webResponse = Invoke-WebRequest -Uri $Uri -Method Post -Headers $headers -Body $utf8Bytes -TimeoutSec 30 -UseBasicParsing
         $response = $webResponse.Content | ConvertFrom-Json
         
-        # Capture Dynamic AK for persistence
-        if ($response.ak) {
-            $Global:GiipSessionAK = $response.ak
-        }
+        if ($response.ak) { $Global:GiipSessionAK = $response.ak }
         
-        if ($response.data -and $response.data.Count -gt 0) {
-            return $response.data[0]
-        }
+        if ($response.data -and $response.data.Count -gt 0) { return $response.data[0] }
         return $response
     } catch {
         Write-GiipLog "DEBUG" "API Call Failed: $_"
