@@ -10,8 +10,9 @@ try {
     
     $Config = Get-GiipConfig
 
-    # 1. Collect Process List
-    $processes = Get-Process | Select-Object Id, ProcessName, CPU, WorkingSet, StartTime, MainWindowTitle | Sort-Object -Property Id
+    # 1. Collect Process List (Top 100 by Memory to prevent DB truncation)
+    $processes = Get-Process | Select-Object Id, ProcessName, CPU, WorkingSet, StartTime, MainWindowTitle | 
+                 Sort-Object -Property WorkingSet -Descending | Select-Object -First 100
 
     # Format as a string table
     $sb = new-object System.Text.StringBuilder
@@ -29,6 +30,10 @@ try {
     }
 
     $processListText = $sb.ToString()
+    # Hard truncation at 7,500 chars for DB safety (tKvs.kValue often VARCHAR(8000))
+    if ($processListText.Length -gt 7500) {
+        $processListText = $processListText.Substring(0, 7480) + "...(TRUNCATED)"
+    }
 
     # 2. Send to KVS
     $response = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key $Config.lssn -Factor "process_list" -Value $processListText

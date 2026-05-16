@@ -25,10 +25,12 @@ giipAgent의 핵심 기능 리스트 및 기술적 상세 사양입니다.
   - 수집된 데이터를 `AgentAutoRegister` API를 통해 중앙 서버로 전송.
 
 ## 4. 데이터베이스 및 프로세스 모니터링
-- **MS SQL/MySQL 모니터링**: `giipscripts/dpa-put-mssql.ps1`, `giipscripts/dpa-put-mysql.ps1`
-  - DB 세션 및 쿼리 성능 데이터를 수집하여 KVS 또는 전용 API로 전송.
+- **데이터베이스 모니터링 (DbMonitor)**: `giipscripts/modules/DbMonitor.ps1`
+  - **접속 정보 수집**: `ManagedDatabaseListForAgent` API를 통해 중앙 서버에 등록된 DB 목록 및 접속 정보(Host, Port, User, Password 등)를 동적으로 수집.
+  - **지표 수집**: 수집된 접속 정보를 바탕으로 `lib/DbCollector.ps1` 라이브러리를 사용하여 MSSQL/MySQL 성능 지표(Uptime, Threads, QPS 등)를 수집.
+  - **결과 전송**: `MdbStatsUpdate` API를 통해 수집된 데이터를 중앙 서버로 전송.
 - **프로세스 리스트**: `giipscripts/modules/ProcessList.ps1`
-  - `Get-Process` 결과물을 `Invoke-GiipKvsPut` 함수를 통해 KVS(`factor="process_list"`)로 업로드.
+  - `Get-Process` 결과물을 `Invoke-GiipKvsPut` 함수를 통해 KVS(`factor="process_list"`)로 업로드. DB 컬럼 크기 제한을 고려하여 상위 100개 프로세스 정렬 및 문자열 절단 처리 수행.
 
 ## 5. 네트워크 연결 분석
 - **커넥션 리스트**: `giipscripts/modules/DbConnectionList.ps1`, `giipscripts/modules/HostConnectionList.ps1`

@@ -55,6 +55,7 @@ try {
 $statsList = @()
 foreach ($db in $dbList) {
     try {
+        Write-GiipLog "DEBUG" "[DbMonitor] DB Object: $($db | ConvertTo-Json -Compress)"
         $stat = Get-GiipDbMetrics -DbInfo $db -LibDir $LibDir -Config $Config
         if ($stat) {
             $cmdText = "MdbStatsUpdate mdb_id uptime threads qps buffer_pool cpu memory query_hash"

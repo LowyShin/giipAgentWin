@@ -22,10 +22,10 @@ function Get-GiipDbMetrics {
     }
 
     $dbType = $DbInfo.db_type
-    $ip = $DbInfo.ip
-    $port = $DbInfo.port
-    $user = $DbInfo.user
-    $pass = $DbInfo.pass
+    $ip = if ($DbInfo.ip) { $DbInfo.ip } else { $DbInfo.db_host }
+    $port = if ($DbInfo.port) { $DbInfo.port } else { $DbInfo.db_port }
+    $user = if ($DbInfo.user) { $DbInfo.user } else { $DbInfo.db_user }
+    $pass = if ($DbInfo.pass) { $DbInfo.pass } else { $DbInfo.db_password }
 
     Write-GiipLog "INFO" "Collecting metrics for $dbType on $ip : $port"
 
@@ -33,10 +33,21 @@ function Get-GiipDbMetrics {
         if ($dbType -eq "mssql") {
             # MSSQL Collection Logic (using SqlConnectionStringBuilder)
             $connBuilder = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
-            $connBuilder["Data Source"] = "$ip,$port"
-            $connBuilder["User ID"] = $user
-            $connBuilder["Password"] = $pass
+            
+            # Default to local if IP/Port missing
+            $targetIp = if ($ip -and ($ip -is [string] -and $ip.Trim() -ne "")) { $ip } else { "localhost" }
+            $targetPort = if ($port) { $port } else { "1433" }
+            
+            $connBuilder["Data Source"] = "$targetIp,$targetPort"
+            if ($user -and $user.Trim()) {
+                $connBuilder["User ID"] = $user
+                $connBuilder["Password"] = $pass
+            } else {
+                $connBuilder["Integrated Security"] = $true
+            }
             $connBuilder["Connect Timeout"] = 15
+            # Ensure compatibility with newer drivers/local certs
+            $connBuilder["TrustServerCertificate"] = $true
             
             $conn = New-Object System.Data.SqlClient.SqlConnection($connBuilder.ConnectionString)
             $conn.Open()

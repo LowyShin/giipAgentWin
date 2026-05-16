@@ -107,7 +107,25 @@ function Invoke-GiipApiV2 {
         $headers = @{ 'Content-Type' = 'application/x-www-form-urlencoded; charset=utf-8' }
         
         $webResponse = Invoke-WebRequest -Uri $Uri -Method Post -Headers $headers -Body $utf8Bytes -TimeoutSec 30 -UseBasicParsing
-        $response = $webResponse.Content | ConvertFrom-Json
+        $responseJson = $webResponse.Content
+        $response = $null
+        
+        try {
+            $response = $responseJson | ConvertFrom-Json
+        } catch {
+            Write-GiipLog "WARN" "API Response JSON parsing failed. Attempting dirty parse."
+            # Fallback: Try to extract RstVal and RstMsg using regex if JSON is malformed
+            $rstVal = if ($responseJson -match '"RstVal"\s*:\s*(\d+)') { $Matches[1] } else { "500" }
+            $rstMsg = if ($responseJson -match '"RstMsg"\s*:\s*"([^"]+)"') { $Matches[1] } else { "Unknown JSON Error" }
+            $response = @{ RstVal = $rstVal; RstMsg = $rstMsg; isDirty = $true }
+            
+            # If it's a 200, we can treat it as success even if JSON was ugly
+            if ($rstVal -eq "200") {
+                Write-GiipLog "INFO" "Dirty parse succeeded: Operation was successful (200)."
+            } else {
+                Write-GiipLog "DEBUG" "Dirty parse result: $rstVal - $rstMsg"
+            }
+        }
         
         if ($response.ak) { $Global:GiipSessionAK = $response.ak }
         
