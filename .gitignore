@@ -19,6 +19,7 @@ giipTmpScript.*
 discovery-output*.json
 data/
 logs/
+agent_test_out.txt
 
 # OS Files
 .DS_Store
