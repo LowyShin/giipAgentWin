@@ -57,6 +57,8 @@ function Get-GiipConfig {
                 if ($_ -match '^\s*([^=:#\s\[]+)\s*[:=]\s*(.*)$') {
                     $k = $Matches[1].Trim().ToLower()
                     $v = $Matches[2].Trim()
+                    # Strip surrounding quotes if present
+                    if ($v -match '^["''](.*)["'']$') { $v = $Matches[1] }
                     $config[$k] = $v
                 }
             }
