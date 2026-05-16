@@ -1,7 +1,7 @@
 # ============================================================================
 # giipAgent Common Library (PowerShell)
-# Version: 1.06
-# Purpose: Shared utilities and API communication
+# Version: 1.07
+# Purpose: Shared utilities, Configuration, and API communication
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +15,49 @@ function Write-GiipLog {
     $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $LogLine = "[$Timestamp] [$Level] $Message"
     Write-Host $LogLine
+}
+
+# Function: Load giipAgent Configuration
+function Get-GiipConfig {
+    param([string]$BaseDir)
+    
+    if (-not $BaseDir) { $BaseDir = $PSScriptRoot }
+    $config = @{}
+    $configPath = $null
+    
+    # Priority 1: Parent
+    $parentDir = Split-Path $BaseDir -Parent
+    if ($parentDir) {
+        $path = Join-Path $parentDir "giipAgent.cfg"
+        if (Test-Path $path) { $configPath = $path }
+    }
+    
+    # Priority 2: UserProfile
+    if (-not $configPath) {
+        $userPath = Join-Path $env:USERPROFILE "giipAgent.cfg"
+        if (Test-Path $userPath) { $configPath = $userPath }
+    }
+    
+    # Priority 3: Local
+    if (-not $configPath) {
+        $localPath = Join-Path $BaseDir "giipAgent.cfg"
+        if (Test-Path $localPath) { $configPath = $localPath }
+    }
+    
+    if ($configPath) {
+        $raw = Get-Content $configPath -Raw -ErrorAction SilentlyContinue
+        if ($raw) {
+            $raw -split "`r?`n" | ForEach-Object {
+                if ($_ -match '^\s*([^=:#\s\[]+)\s*[:=]\s*(.*)$') {
+                    $k = $Matches[1].Trim().ToLower()
+                    $v = $Matches[2].Trim()
+                    $config[$k] = $v
+                }
+            }
+        }
+    }
+    
+    return $config
 }
 
 # Function: Import MySQL Connector DLL
@@ -54,10 +97,9 @@ function Invoke-GiipApiV2 {
         $webResponse = Invoke-WebRequest -Uri $Uri -Method Post -Headers $headers -Body $utf8Bytes -TimeoutSec 30 -UseBasicParsing
         $response = $webResponse.Content | ConvertFrom-Json
         
-        # Capture Dynamic AK for persistence (from result or RstMsg metadata if applicable)
+        # Capture Dynamic AK for persistence
         if ($response.ak) {
             $Global:GiipSessionAK = $response.ak
-            Write-GiipLog "DEBUG" "Dynamic AK updated for session."
         }
         
         if ($response.data -and $response.data.Count -gt 0) {
