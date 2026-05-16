@@ -1,4 +1,4 @@
-# diag_userlist.ps1
+﻿# diag_userlist.ps1
 # Purpose: Diagnose the User List collection pipeline for mdb_id 70352
 
 $ErrorActionPreference = "Stop"
@@ -10,10 +10,10 @@ $Global:BaseDir = $AgentWinDir
 Write-Host "--- [Step 1] Loading Libraries from $LibDir ---"
 if (Test-Path (Join-Path $LibDir "Common.ps1")) {
     . (Join-Path $LibDir "Common.ps1")
-    Write-Host "✅ Common.ps1 loaded."
+    Write-Host " Common.ps1 loaded."
 }
 else {
-    Write-Error "❌ Common.ps1 not found in $LibDir"
+    Write-Error " Common.ps1 not found in $LibDir"
     exit 1
 }
 
@@ -21,12 +21,12 @@ else {
 Write-Host "--- [Step 2] Getting Config ---"
 try {
     $Config = Get-GiipConfig
-    Write-Host "✅ Config loaded."
+    Write-Host " Config loaded."
     Write-Host "   LSSN: $($Config.lssn)"
     Write-Host "   API : $($Config.apiaddrv2)"
 }
 catch {
-    Write-Error "❌ Failed to load config: $_"
+    Write-Error " Failed to load config: $_"
     exit 1
 }
 
@@ -46,14 +46,14 @@ try {
         Write-Host "Found $($dbList.Count) databases."
         $target = $dbList | Where-Object { $_.mdb_id -eq 70352 }
         if ($target) {
-            Write-Host "✅ Target DB Found: mdb_id=70352" -ForegroundColor Green
+            Write-Host " Target DB Found: mdb_id=70352" -ForegroundColor Green
             Write-Host "   Name: $($target.db_name)"
             Write-Host "   Host: $($target.db_host)"
             Write-Host "   Type: $($target.db_type)"
             Write-Host "   Req Flag: $($target.user_list_req)" -ForegroundColor (if ($target.user_list_req -eq 1 -or $target.user_list_req -eq $true) { "Green" } else { "Yellow" })
         }
         else {
-            Write-Host "❌ Target DB NOT found in the list for LSSN $($Config.lssn)" -ForegroundColor Red
+            Write-Host " Target DB NOT found in the list for LSSN $($Config.lssn)" -ForegroundColor Red
             Write-Host "   Try to find by name 'stagedb97'..."
             $byName = $dbList | Where-Object { $_.db_name -like "*stagedb97*" }
             if ($byName) {
@@ -62,11 +62,11 @@ try {
         }
     }
     else {
-        Write-Host "❌ Failed to retrieve DB list or response empty." -ForegroundColor Red
+        Write-Host " Failed to retrieve DB list or response empty." -ForegroundColor Red
     }
 }
 catch {
-    Write-Error "❌ API Call failed: $_"
+    Write-Error " API Call failed: $_"
 }
 
 # 4. Check for History
@@ -75,7 +75,7 @@ try {
     $histReq = @{ mdb_id = 70352 } | ConvertTo-Json -Compress
     $histRes = Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListGet mdb_id" -JsonData $histReq
     if ($histRes.data -and $histRes.data[0].history) {
-        Write-Host "✅ History found (Count: $($histRes.data[0].history.Count) or length: $($histRes.data[0].history.Length))"
+        Write-Host " History found (Count: $($histRes.data[0].history.Count) or length: $($histRes.data[0].history.Length))"
     }
     else {
         Write-Host "No history found for ID 70352."
@@ -84,3 +84,4 @@ try {
 catch {
     Write-Host "Failed to check history: $_"
 }
+

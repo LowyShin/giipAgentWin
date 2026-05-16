@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # DbConnectionList.ps1
 # Purpose: Collect active client connections from managed databases (Net3D)
 # Usage: .\DbConnectionList.ps1
@@ -68,19 +68,29 @@ function Get-MSSQLConnections {
 "@
         $reader = $cmd.ExecuteReader()
         
+        # [HARDEN] Get Column Mapping to prevent "Property not found" Index errors
+        $colMap = @{}
+        for ($i = 0; $i -lt $reader.FieldCount; $i++) {
+            $colMap[$reader.GetName($i)] = $i
+        }
+
         while ($reader.Read()) {
-            $connList += @{
-                client_net_address = $reader["client_net_address"]
-                program_name       = $reader["program_name"]
-                conn_count         = $reader["conn_count"]
-                cpu_load           = $reader["cpu_load"]
-                last_sql           = $reader["last_sql"]
-                full_sql           = if ($reader["full_sql"] -isnot [System.DBNull]) { $reader["full_sql"] } else { "" }
-                query_hash         = $reader["query_hash"]
-                sql_handle         = $reader["sql_handle"]
-                query_start_time   = if ($reader["query_start_time"] -isnot [System.DBNull]) { [DateTime]$reader["query_start_time"] } else { $null }
-                query_id           = $reader["query_id"]
+            $row = @{}
+            foreach ($name in $colMap.Keys) {
+                $val = $reader.GetValue($colMap[$name])
+                $row[$name] = if ($val -is [System.DBNull]) { $null } else { $val }
             }
+            
+            # Ensure DateTime conversion for specific field
+            if ($row.ContainsKey("query_start_time") -and $row.query_start_time -ne $null) {
+                $row.query_start_time = [DateTime]$row.query_start_time
+            }
+
+            # Schema Sanity: sql_handle & query_hash should always exists in the hashtable
+            if (-not $row.ContainsKey("sql_handle")) { $row["sql_handle"] = $null }
+            if (-not $row.ContainsKey("query_hash")) { $row["query_hash"] = $null }
+
+            $connList += $row
         }
         $reader.Close()
     }
@@ -136,6 +146,9 @@ function Get-MySQLConnections {
                 query_hash         = Get-StringMd5 -InputString $sqlText
                 query_id           = $reader["id"]
                 query_start_time   = (Get-Date).AddSeconds(-[int]$reader["time"])
+                # [SCHEMA] Ensure parity with MSSQL fields to prevent property-not-found errors
+                sql_handle         = $null
+                plan_handle        = $null
             }
         }
         $reader.Close()
@@ -228,7 +241,10 @@ try {
             }
         }
         catch {
-            Write-GiipLog "WARN" "[DbConnectionList] Failed for $($db.db_host): $_"
+            # Enhanced Logging: Capture full exception detail
+            $errMsg = if ($_.Exception) { $_.Exception.Message } else { $_.ToString() }
+            $errType = if ($_.Exception) { $_.Exception.GetType().Name } else { "UnknownException" }
+            Write-GiipLog "WARN" "[DbConnectionList] Failed for $($db.db_host): [$errType] $errMsg"
         }
     }
 
@@ -239,3 +255,4 @@ catch {
     exit 1
 }
 exit 0
+

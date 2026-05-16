@@ -1,4 +1,4 @@
-
+﻿
 # ============================================================================
 # giipAgent CQE (Centralized Queue Engine) Library (PowerShell)
 # Version: 1.00
@@ -76,3 +76,4 @@ function Get-Queue {
     $scriptBody = $data.ms_body
     return $scriptBody
 }
+

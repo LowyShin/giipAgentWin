@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # LogCleanup.ps1
 # Purpose: Clean up old log files (Log Rotation/Retention)
 # Usage: . (Join-Path $LibDir "LogCleanup.ps1"); Start-LogCleanup -Days 7
@@ -48,3 +48,4 @@ function Start-LogCleanup {
         Write-Host "[LogCleanup] Error during cleanup: $_"
     }
 }
+

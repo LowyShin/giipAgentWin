@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # SyncFullQuery.ps1
 # Purpose: Periodically collect full SQL query text for query_hashes in tKVS
 # Usage: Run as CQE script
@@ -63,3 +63,4 @@ foreach ($db in $dbList) {
 }
 
 exit 0
+

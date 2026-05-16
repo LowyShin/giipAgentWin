@@ -1,7 +1,6 @@
-# ============================================================================
-# DbMonitor.ps1
+﻿# ============================================================================
+# DbMonitor.ps1 (Pure English Version)
 # Purpose: Fetch registered DB list and collect performance metrics
-# Usage: .\DbMonitor.ps1
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
@@ -9,24 +8,14 @@ $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
 $AgentRoot = Split-Path -Path (Split-Path -Path $ScriptDir -Parent) -Parent
 $LibDir = Join-Path $AgentRoot "lib"
 $DataDir = Join-Path $AgentRoot "data"
-$DbStatsFile = Join-Path $DataDir "db_stats.json"
 
 # Load Libraries
 try {
     . (Join-Path $LibDir "Common.ps1")
-}
-catch {
-    Write-Host "FATAL: Failed to load Common.ps1 from $LibDir"
-    exit 1
-}
-
-# New: Load DbCollector & ErrorLog Libraries
-try {
     . (Join-Path $LibDir "DbCollector.ps1")
     . (Join-Path $LibDir "ErrorLog.ps1")
-}
-catch {
-    Write-GiipLog "ERROR" "[DbMonitor] Failed to load libraries from $LibDir"
+} catch {
+    Write-Host "FATAL: Failed to load libraries. ($_)"
     exit 1
 }
 
@@ -34,142 +23,53 @@ catch {
 try {
     $Config = Get-GiipConfig
     if (-not $Config) { throw "Config is empty" }
-}
-catch {
-    Write-GiipLog "ERROR" "[DbMonitor] Failed to load config: $_"
-    # ErrorLog fallback removed for brevity, assuming standard setup
+} catch {
+    Write-GiipLog "ERROR" "[DbMonitor] Config load failed: $_"
     exit 1
 }
 
 Write-GiipLog "INFO" "[DbMonitor] Starting DB Monitoring..."
 
-# 1. Get DB List from API
+# 1. Get DB List
 try {
-    $maskedSk = if ($Config.sk -and $Config.sk.Length -gt 4) { $Config.sk.Substring(0, 4) + "****" } else { "Invalid SK" }
-    Write-GiipLog "INFO" "[DbMonitor] Requesting DB List using SK: $maskedSk"
-
     $reqData = @{ lssn = $Config.lssn }
     $reqJson = $reqData | ConvertTo-Json -Compress
-    
     $response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson
     
-    if ($response.RstVal) {
-        Write-GiipLog "INFO" "[DbMonitor] API Result: Val=$($response.RstVal), Msg=$($response.RstMsg)"
-    }
-    
     $dbList = $null
-    
     if ($response.data) { $dbList = $response.data }
     elseif ($response -is [Array]) { $dbList = $response }
     elseif ($response.mdb_id) { $dbList = @($response) }
 
     if (-not $dbList) {
-        Write-GiipLog "INFO" "[DbMonitor] No databases found to monitor."
+        Write-GiipLog "INFO" "[DbMonitor] No databases found."
         exit 0
     }
-
-    if (-not ($dbList -is [Array] -or $dbList -is [System.Collections.IEnumerable])) {
-        $dbList = @($dbList)
-    }
-
-    Write-GiipLog "INFO" "[DbMonitor] Found $($dbList.Count) databases to monitor."
-    
-    # Save DB list to JSON file for debugging/monitoring
-    try {
-        $dbListFile = Join-Path $DataDir "db_list_cache.json"
-        $dbList | ConvertTo-Json -Depth 10 | Out-File -FilePath $dbListFile -Encoding UTF8 -Force
-        Write-GiipLog "INFO" "[DbMonitor] DB list saved to: $dbListFile"
-    }
-    catch {
-        Write-GiipLog "WARN" "[DbMonitor] Failed to save DB list to file: $_"
-    }
-
-}
-catch {
-    Write-GiipLog "ERROR" "[DbMonitor] Failed to get DB list: $_"
+    Write-GiipLog "INFO" "[DbMonitor] Found $($dbList.Count) databases."
+} catch {
+    Write-GiipLog "ERROR" "[DbMonitor] API request failed: $_"
     exit 1
 }
 
-# 2. Collect Stats (Using DbCollector)
+# 2. Collect & Send Stats
 $statsList = @()
-
 foreach ($db in $dbList) {
     try {
         $stat = Get-GiipDbMetrics -DbInfo $db -LibDir $LibDir -Config $Config
         if ($stat) {
-            $statsList += $stat
-        }
-    }
-    catch {
-        Write-GiipLog "ERROR" "[DbMonitor] Unexpected error on DB loop: $_"
-    }
-}
-
-# 3. Send Stats
-if ($statsList.Count -gt 0) {
-    Write-GiipLog "INFO" "[DbMonitor] Metrics collected successfully ($($statsList.Count)), preparing to send."
-
-    foreach ($stat in $statsList) {
-        $mdb_id = $stat.mdb_id
-        
-        try {
-            # 🔧 Restored to Standard: Placeholders in text for the gateway to replace from JsonData
-            # This follows the 'Correct Approach' in PROHIBITED_ACTION_2_RUN_PS1.md
             $cmdText = "MdbStatsUpdate mdb_id uptime threads qps buffer_pool cpu memory query_hash"
             $statJson = $stat | ConvertTo-Json -Compress
-            
             $response = Invoke-GiipApiV2 -Config $Config -CommandText $cmdText -JsonData $statJson
-        
             if ($response -and $response.RstVal -eq "200") {
-                Write-GiipLog "INFO" "[DbMonitor] ✅ MdbStatsUpdate SUCCESS for DB $mdb_id"
-            }
-            else {
-                $rstVal = if ($response) { $response.RstVal } else { "NULL" }
-                $rstMsg = if ($response) { $response.RstMsg } else { "No response" }
-                Write-GiipLog "WARN" "[DbMonitor] ⚠️ MdbStatsUpdate FAILED for DB ${mdb_id}: RstVal=$rstVal, RstMsg=$rstMsg"
-                
-                # Use standard error logging to server
-                sendErrorLog -Config $Config -Message "[DbMonitor] MdbStatsUpdate API FAILED for DB $mdb_id" -Data $stat -Severity "error"
+                Write-GiipLog "INFO" "[DbMonitor] SUCCESS: DB $($db.mdb_id) metrics sent."
+            } else {
+                Write-GiipLog "WARN" "[DbMonitor] FAILED: DB $($db.mdb_id) API error."
             }
         }
-        catch {
-            Write-GiipLog "ERROR" "[DbMonitor] ❌ Exception sending stats for DB ${mdb_id}: $_"
-            sendErrorLog -Config $Config -Message "[DbMonitor] Exception in Send Loop" -Data $_.Exception -Severity "critical"
-        }
-    }
-    
-    # Save stats to local file for reference
-    $statsList | ConvertTo-Json -Depth 5 | Set-Content -Path $DbStatsFile -Encoding UTF8
-
-    # 🚀 Report to Agent Work Explorer
-    try {
-        . (Join-Path $LibDir "KVS.ps1")
-        $workResult = @{
-            status    = "success"
-            message   = "Collected metrics for $($statsList.Count) databases."
-            exit_code = 0
-            timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-        }
-        Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "db_monitor_check" -Value $workResult | Out-Null
-    }
-    catch {
-        Write-GiipLog "WARN" "[DbMonitor] Failed to report to KVS: $_"
+    } catch {
+        Write-GiipLog "ERROR" "[DbMonitor] Loop error: $_"
     }
 }
-else {
-    Write-GiipLog "WARN" "[DbMonitor] No metrics collected (Count=0)"
-    
-    # Report failure/warning to KVS
-    try {
-        . (Join-Path $LibDir "KVS.ps1")
-        $workResult = @{
-            status    = "warning"
-            message   = "No active databases found to monitor."
-            exit_code = 0
-        }
-        Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "db_monitor_check" -Value $workResult | Out-Null
-    }
-    catch {}
-}
 
+Write-GiipLog "INFO" "[DbMonitor] Completed."
 exit 0

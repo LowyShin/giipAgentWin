@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # giipAgentWin Library: Worker Functions
 # Purpose: Queue Processing, Task Execution, and Result Reporting
 # ============================================================================
@@ -183,3 +183,4 @@ function Invoke-ScriptBlock {
     }
 }
 #endregion
+

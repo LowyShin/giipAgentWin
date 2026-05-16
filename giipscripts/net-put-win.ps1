@@ -1,53 +1,53 @@
-<#
+﻿<#
 .SYNOPSIS
-  Windows 서버에서 3D 네트워크 구성 시각화를 위한 정보를 수집하여 JSON으로 저장합니다.
+  Windows  3D       JSON .
 
 .DESCRIPTION
-  - OS/하드웨어/가상화 여부 수집
-  - 네트워크 어댑터(MAC, 링크 속도, MTU, VLAN 등)
-  - IP 구성(IPv4/IPv6, 게이트웨이, DNS, 접미사)
-  - 선택적 수집: 라우팅 테이블, ARP/Neighbor 테이블, TCP 연결(프로세스 매핑)
+  - OS//  
+  -  (MAC,  , MTU, VLAN )
+  - IP (IPv4/IPv6, , DNS, )
+  -  :  , ARP/Neighbor , TCP ( )
 
-  최신 OS에서는 Get-Net* 계열을 우선 사용하고, 구버전에서는 WMI/CIM 및 명령어 출력 파싱으로 폴백합니다.
+   OS Get-Net*   ,  WMI/CIM     .
 
 .PARAMETER Output
-  출력 JSON 파일 경로. 기본값: .\net_inventory.json
+   JSON  . : .\net_inventory.json
 
 .PARAMETER IncludeRoutes
-  라우팅 테이블을 포함합니다.
+    .
 
 .PARAMETER IncludeArp
-  ARP(Neighbor) 테이블을 포함합니다.
+  ARP(Neighbor)  .
 
 .PARAMETER IncludeConnections
-  TCP 연결 정보를 포함합니다.
+  TCP   .
 
 .PARAMETER TopConnections
-  수집할 최대 TCP 연결 수. 기본값 2000.
+    TCP  .  2000.
 
 .PARAMETER SendToGiip
-  수집 후 giipapi(KVSPut)로 업로드합니다.
+    giipapi(KVSPut) .
 
 .PARAMETER GiipEndpoint
-  giipapi 엔드포인트 URL(예: Azure Function HTTP 트리거).
+  giipapi  URL(: Azure Function HTTP ).
 
 .PARAMETER GiipCode
-  Azure Function 코드(있을 경우 쿼리스트링 code= 로 추가됨).
+  Azure Function (   code=  ).
 
 .PARAMETER GiipUserToken
-  업로드 시 usertoken/token 필드에 사용되는 토큰 값.
+    usertoken/token    .
 
 .PARAMETER GiipUserId
-  업로드 시 user_id 필드에 전달되는 사용자 ID(옵션).
+    user_id    ID().
 
 .PARAMETER KType
-  KVSPut 의 kType. 기본값 'lssn'.
+  KVSPut  kType.  'lssn'.
 
 .PARAMETER KKey
-  KVSPut 의 kKey. 반드시 lssn 값을 넣어야 합니다.
+  KVSPut  kKey.  lssn   .
 
 .PARAMETER KFactor
-  KVSPut 의 kFactor. 기본값 'netinv'.
+  KVSPut  kFactor.  'netinv'.
 
 .EXAMPLE
   .\Collect-NetInventory.ps1 -Output C:\temp\srv1.json -IncludeRoutes -IncludeArp -IncludeConnections
@@ -56,8 +56,8 @@
   Invoke-Command -ComputerName srv1 -FilePath .\Collect-NetInventory.ps1 -ArgumentList @("C:\\temp\\srv1.json",$true,$true,$false)
 
 .NOTES
-  일부 항목 수집에는 관리자 권한이 필요할 수 있습니다(ARP, 라우팅 등).
-  출력 인코딩: UTF-8(BOM 없음).
+         (ARP,  ).
+   : UTF-8(BOM ).
 #>
 [CmdletBinding()]
 param(
@@ -66,7 +66,7 @@ param(
   [switch]$IncludeArp,
   [switch]$IncludeConnections,
   [int]$TopConnections = 2000,
-  # --- giipapi 전송 옵션 ---
+  # --- giipapi   ---
   [switch]$SendToGiip,
   [string]$GiipEndpoint,
   [string]$GiipCode,
@@ -79,8 +79,8 @@ param(
 
 
 # @@ANCHOR:USER_CONFIG_START
-# region 사용자 설정: giipAgent.cfg에서 KVSConfig 읽기, kFactor만 이 파일에서 지정
-# ⚠️⚠️⚠️ DO NOT MODIFY THIS PATH ⚠️⚠️⚠️
+# region  : giipAgent.cfg KVSConfig , kFactor   
+#  DO NOT MODIFY THIS PATH 
 $kFactor = 'netinv'
 $cfgPath = Join-Path $PSScriptRoot '..\..\giipAgent.cfg'
 if (Test-Path -LiteralPath $cfgPath) {
@@ -98,13 +98,13 @@ if (Test-Path -LiteralPath $cfgPath) {
   if ($KVSConfig['Enabled']) { $KVSConfig['Enabled'] = ($KVSConfig['Enabled'] -eq 'true') }
   if (-not $KVSConfig['HostKey']) { $KVSConfig['HostKey'] = $env:COMPUTERNAME }
 }
-# kFactor만 이 파일에서 직접 지정
+# kFactor    
 $KVSConfig['KFactor'] = 'netinv'
 # @@ANCHOR:USER_CONFIG_END
 
 # @@ANCHOR:DEFAULT_INJECTION_START
-# 상단 기본값을 파라미터에 반영(파라미터가 비어있을 때만)
-# (디버그) 주입 전 엔드포인트 상태 출력
+#    (  )
+# ()     
 Write-Host ("[TRACE] Defaults(before): GiipEndpoint='{0}'" -f $GiipEndpoint)
 if (-not $PSBoundParameters.ContainsKey('SendToGiip')) { if ($KVSConfig.Enabled) { $SendToGiip = $true } }
 if (-not $GiipEndpoint -and $KVSConfig.Endpoint) { $GiipEndpoint = $KVSConfig.Endpoint }
@@ -115,7 +115,7 @@ if (-not $KType -and $KVSConfig.KType) { $KType = $KVSConfig.KType }
 if (-not $KKey -and $KVSConfig.KKey) { $KKey = $KVSConfig.KKey }
 if (-not $KFactor -and $KVSConfig.KFactor) { $KFactor = $KVSConfig.KFactor }
 if (-not $HostKey -and $KVSConfig.HostKey) { $HostKey = $KVSConfig.HostKey }
-# (디버그) 주입 후 엔드포인트 상태 출력
+# ()     
 Write-Host ("[TRACE] Defaults(after):  GiipEndpoint='{0}' ; KVSConfig.Endpoint='{1}'" -f $GiipEndpoint, $KVSConfig.Endpoint)
 # @@ANCHOR:DEFAULT_INJECTION_END
 
@@ -126,7 +126,7 @@ function Test-HasCommand {
 }
 
 function New-StableGuidFromString {
-  <# 암호용이 아닌 안정적인 GUID 생성(MD5 16바이트 → GUID 형식) #>
+  <#    GUID (MD5 16  GUID ) #>
   param([Parameter(Mandatory)][string]$InputString)
   $md5 = [System.Security.Cryptography.MD5]::Create()
   try {
@@ -157,7 +157,7 @@ function Get-FirstNonLoopbackIPv4 {
 }
 # @@ANCHOR:UTILS_CONVERT_SPEED_START
 function Convert-SpeedStringToBps {
-  <# 링크 속도 문자열("1.2 Gbps", "100 Mbps", 1000000000) → Int64 bps 변환 #>
+  <#   ("1.2 Gbps", "100 Mbps", 1000000000)  Int64 bps  #>
   param([Parameter(Mandatory = $false)]$Value)
   if ($null -eq $Value -or $Value -eq '') { return $null }
   if ($Value -is [int64] -or $Value -is [int] -or $Value -is [long]) { return [int64]$Value }
@@ -268,7 +268,7 @@ function Get-NetworkAdaptersInfo {
     }
   }
   else {
-    # 폴백: WMI
+    # : WMI
     $nets = Get-CimInstance Win32_NetworkAdapter -ErrorAction SilentlyContinue | Where-Object { $_.PhysicalAdapter -eq $true -and $_.NetEnabled -ne $null }
     foreach ($n in $nets) {
       $adapters += [pscustomobject]@{
@@ -295,12 +295,12 @@ function Get-IPConfigurationInfo {
   $cfgs = @()
   if (Test-HasCommand 'Get-NetIPConfiguration') {
     foreach ($c in (Get-NetIPConfiguration -ErrorAction SilentlyContinue)) {
-      # DHCP 상태는 Get-NetIPInterface에서 확인
+      # DHCP  Get-NetIPInterface 
       $if4 = $null; $if6 = $null
       try { $if4 = Get-NetIPInterface -InterfaceIndex $c.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1 } catch {}
       try { $if6 = Get-NetIPInterface -InterfaceIndex $c.InterfaceIndex -AddressFamily IPv6 -ErrorAction SilentlyContinue | Select-Object -First 1 } catch {}
 
-      # 안전한 DNS 서버/접미사, 게이트웨이 추출 (속성 존재 여부 확인)
+      #  DNS /,   (   )
       $dnsServers = @()
       if ($c -and $c.PSObject.Properties.Match('DnsServer').Count -gt 0 -and $c.DnsServer) {
         if ($c.DnsServer.PSObject.Properties.Match('ServerAddresses').Count -gt 0) {
@@ -393,7 +393,7 @@ function Get-NeighborTableInfo {
   }
   else {
     $raw = (arp -a) 2>$null | Out-String
-    # 단순 파싱
+    #  
     foreach ($line in ($raw -split "`n")) {
       if ($line -match '^(\s*\d+\.\d+\.\d+\.\d+)\s+([0-9a-f\-:]{11,})\s+([\w-]+)') {
         $neigh += [pscustomobject]@{
@@ -430,7 +430,7 @@ function Get-TcpConnectionsInfo {
     }
   }
   else {
-    # 폴백: netstat -ano
+    # : netstat -ano
     $procMap = @{}
     foreach ($p in Get-Process) { $procMap[$p.Id] = $p.ProcessName }
     
@@ -464,7 +464,7 @@ $routes = Get-RouteTableInfo
 $neighbors = Get-NeighborTableInfo
 $tcp = Get-TcpConnectionsInfo
 
-# nodeId: 호스트명 + 첫 IPv4 또는 주요 MAC
+# nodeId:  +  IPv4   MAC
 $firstIPv4 = Get-FirstNonLoopbackIPv4
 if (-not $firstIPv4) { $firstIPv4 = '' }
 $primaryMac = ($adapters | Select-Object -First 1).mac_address
@@ -491,9 +491,9 @@ $doc = [pscustomobject]@{
 # @@ANCHOR:API_URL_BUILDER_START
 function Build-ApiUrl {
   param([Parameter(Mandatory)][string]$Endpoint, [string]$Code)
-  # 입력 값 진단 로그(영문 출력 유지)
+  #    (  )
   Write-Host ("[TRACE] Build-ApiUrl: input Endpoint='{0}'" -f $Endpoint)
-  # 엔드포인트/코드 안전 처리(공백 제거, 스킴 확인, code 인코딩)
+  # /  ( ,  , code )
   $e = ([string]$Endpoint).Trim()
   $c = if ($Code) { ([string]$Code).Trim() } else { '' }
   Write-Host ("[TRACE] Build-ApiUrl: trimmed Endpoint='{0}'" -f $e)
@@ -511,12 +511,12 @@ function Build-ApiUrl {
 # @@ANCHOR:API_URL_BUILDER_END
 function Send-GiipApi {
   <#
-    giipapi 로 JSON 업로드. 폼 전송 형식(application/x-www-form-urlencoded)
+    giipapi  JSON .   (application/x-www-form-urlencoded)
     text     : "KVSPut <kType>, <kKey>, <kFactor>"
-    jsondata : JSON 문자열 (전체 문서)
-    usertoken: 세션/사용자 토큰
-    user_id  : 사용자 ID (옵션)
-    token    : 호환성을 위해 usertoken 과 동일 값 전달
+    jsondata : JSON  ( )
+    usertoken: / 
+    user_id  :  ID ()
+    token    :   usertoken    
   #>
   [CmdletBinding()]
   param(
@@ -529,14 +529,14 @@ function Send-GiipApi {
     [Parameter(Mandatory)][string]$KKey,
     [string]$KFactor = 'netinv'
   )
-  # (디버그) Send-GiipApi 수신 엔드포인트 출력
+  # () Send-GiipApi   
   Write-Host ("[TRACE] Send-GiipApi: received Endpoint='{0}'" -f $Endpoint)
   $url = Build-ApiUrl -Endpoint $Endpoint -Code $FunctionCode
   Write-Host ("[TRACE] Send-GiipApi: built url='{0}'" -f $url)
-  # URL 유효성 확인 및 디버그 출력
+  # URL     
   Write-Verbose ("Built URL: [{0}]" -f $url)
   if (-not [uri]::IsWellFormedUriString($url, [UriKind]::Absolute)) { throw ("Invalid URL built: [{0}]" -f $url) }
-  # TLS 1.2 강제 (구형 환경 대응)
+  # TLS 1.2  (  )
   try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
   $ut = ''
   if ($UserToken) { $ut = $UserToken }
@@ -568,7 +568,7 @@ try {
   $json | Out-File -FilePath $Output -Encoding utf8
   Write-Host ("JSON written: {0}" -f (Resolve-Path $Output))
 
-  # (디버그) 출력 블록에서의 엔드포인트/스위치 상태 출력
+  # ()   /  
   Write-Host ("[TRACE] Output block: SendToGiip='{0}' GiipEndpoint='{1}'" -f $SendToGiip, $GiipEndpoint)
   if ($SendToGiip) {
     if (-not $GiipEndpoint) { throw 'GiipEndpoint is required.' }
@@ -582,3 +582,4 @@ catch {
   Write-Error $_
 }
 # endregion Output -----------------------------------------------------------
+
