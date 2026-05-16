@@ -1,4 +1,4 @@
-﻿# check_agent_readiness.ps1
+# check_agent_readiness.ps1
 # AI         
 
 $ErrorActionPreference = "SilentlyContinue"

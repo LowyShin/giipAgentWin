@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-    GitHub 자동 동기화 스크립트 - Safe Pull (Windows 버전)
+    GitHub ??? ?????????????? - Safe Pull (Windows ????
 .DESCRIPTION
-    로컬 변경사항을 보존하면서 원격 브랜치와 안전하게 동기화합니다.
+    ???? ???????????????????????? ?????? ?????????????????.
 .NOTES
     Version: 1.3.9 (Fix Config Search Order & Default Branch)
     Author: GIIP Team
@@ -16,7 +16,7 @@ param(
 
 $ErrorActionPreference = "Continue"
 
-# 1. RepoPath 결정
+# 1. RepoPath ????
 if ([string]::IsNullOrWhiteSpace($RepoPath)) { $RepoPath = $PSScriptRoot }
 if ([string]::IsNullOrWhiteSpace($RepoPath)) { $RepoPath = (Get-Item .).FullName }
 
@@ -56,25 +56,25 @@ Write-Log "Git Auto-Sync v1.3.9 (Safe Mode)"
 Write-Log "Repository: $RepoPath"
 Write-Log "=========================================="
 
-# 2. 설정 파일 파싱 (Priority: Parent > UserProfile > RepoPath)
+# 2. ??????? ??? (Priority: Parent > UserProfile > RepoPath)
 function Find-Config {
     param($StartPath)
     
-    # 1순위: 상위 디렉토리 (가장 권장되는 위치)
+    # 1???: ??? ??????? (???? ?????? ????
     $parentDir = Split-Path $StartPath -Parent
     if ($parentDir) {
         $path = Join-Path $parentDir "giipAgent.cfg"
         if (Test-Path $path) { return $path }
     }
 
-    # 2순위: 사용자 홈 디렉토리
+    # 2???: ???????????????
     $userPath = Join-Path $env:USERPROFILE "giipAgent.cfg"
     if (Test-Path $userPath) { return $userPath }
 
-    # 3순위: 현재 디렉토리 (가급적 피해야 함 - 샘플 파일이 있을 수 있음)
+    # 3???: ??? ??????? (???????????? ?? - ??? ????? ??? ?????)
     $localPath = Join-Path $StartPath "giipAgent.cfg"
     if (Test-Path $localPath) {
-        # 샘플 파일인지 확인 (상단에 'SAMPLE' 문구가 있으면 무시)
+        # ??? ??????? ??? (?????'SAMPLE' ?????? ????? ????
         $content = Get-Content $localPath -TotalCount 10 -ErrorAction SilentlyContinue
         if ($content -match "SAMPLE") {
             Write-Log "Ignoring sample config in repository folder." "DEBUG"
@@ -86,12 +86,12 @@ function Find-Config {
     return $null
 }
 
-# 기본 브랜치는 'real'입니다.
+# ???? ?????? 'real'?????.
 $targetBranch = "real" 
 
 $configPath = Find-Config -StartPath $RepoPath
 if ($configPath) {
-    Write-Log "✓ Config path: $configPath"
+    Write-Log "??Config path: $configPath"
     if (Test-Path $configPath) {
         $raw = Get-Content $configPath -Raw -ErrorAction SilentlyContinue
         if ($raw) {
@@ -106,15 +106,15 @@ if ($configPath) {
     }
     if ($giipConfig.ContainsKey("branch")) {
         $targetBranch = $giipConfig["branch"]
-        Write-Log "✓ Using branch from config: $targetBranch"
+        Write-Log "??Using branch from config: $targetBranch"
     } else {
-        Write-Log "⚠️ No branch found in config, defaulting to: $targetBranch"
+        Write-Log "????No branch found in config, defaulting to: $targetBranch"
     }
 }
 
-Write-Log "✓ Sync Target Branch: $targetBranch"
+Write-Log "??Sync Target Branch: $targetBranch"
 
-# 3. 안전한 동기화 (Conservative Sync)
+# 3. ????? ??????(Conservative Sync)
 if (-not (Test-Path (Join-Path $RepoPath ".git"))) {
     Write-Log "ERROR: Not a git repository"
     exit 1
@@ -132,7 +132,7 @@ git pull origin $targetBranch 2>&1 | ForEach-Object { Write-Log "  $_" }
 
 if ($LASTEXITCODE -eq 0) {
     $commit = git rev-parse --short HEAD
-    Write-Log "✓ Safe sync completed at $commit"
+    Write-Log "??Safe sync completed at $commit"
     Send-RemoteLog -Tag "sync_success" -Message "Safe sync to $targetBranch at $commit"
 } else {
     Write-Log "ERROR: Sync failed during pull"

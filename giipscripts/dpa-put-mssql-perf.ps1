@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Azure SQL Server (QPS, CPU, Memory )   MdbStatsUpdate API 
 .DESCRIPTION

@@ -1,4 +1,4 @@
-﻿# Auto-Discovery Script for Windows
+# Auto-Discovery Script for Windows
 # Collects OS, Hardware, Software, Services, Network information
 # Output: JSON format
 

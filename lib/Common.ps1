@@ -1,4 +1,4 @@
-﻿# ============================================================================
+# ============================================================================
 # giipAgent Common Library (PowerShell)
 # Version: 1.06
 # Purpose: Shared utilities and API communication

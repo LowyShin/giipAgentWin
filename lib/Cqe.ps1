@@ -1,4 +1,4 @@
-﻿
+
 # ============================================================================
 # giipAgent CQE (Centralized Queue Engine) Library (PowerShell)
 # Version: 1.00

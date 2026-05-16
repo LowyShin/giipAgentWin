@@ -1,4 +1,4 @@
-﻿# ============================================================================
+# ============================================================================
 # HostConnectionList.ps1
 # Purpose: Collect active host connections (Netstat) for Net3D
 # Usage: .\HostConnectionList.ps1
