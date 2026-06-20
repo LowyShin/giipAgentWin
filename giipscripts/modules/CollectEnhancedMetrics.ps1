@@ -205,11 +205,9 @@ try {
         top_processes        = $topProcsList
     }
 
-    $unifiedJson = $unifiedPayload | ConvertTo-Json -Depth 5 -Compress
-
-    # Upload all metrics under a single factor to KVS
+    # Upload all metrics under a single factor to KVS (Pass the hashtable directly to avoid double stringification)
     Write-GiipLog "INFO" "[CollectEnhancedMetrics] Uploading unified performance metrics to KVS (Factor: performance_metrics)..."
-    Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "performance_metrics" -Value $unifiedJson | Out-Null
+    Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "performance_metrics" -Value $unifiedPayload | Out-Null
 
     Write-GiipLog "INFO" "[CollectEnhancedMetrics] Successfully collected and uploaded unified performance metrics."
 }
