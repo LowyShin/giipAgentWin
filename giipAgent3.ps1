@@ -74,5 +74,12 @@ if (Test-Path $hostConnScript) {
     & $hostConnScript
 }
 
+# 7. Enhanced Performance Metrics
+$enhancedMetricsScript = Join-Path $ModuleDir "CollectEnhancedMetrics.ps1"
+if (Test-Path $enhancedMetricsScript) {
+    Write-GiipLog "INFO" "[Step 7] Running Enhanced Metrics Collector..."
+    & $enhancedMetricsScript
+}
+
 Write-GiipLog "INFO" "=== giipAgent3.ps1 Completed ==="
 exit 0
