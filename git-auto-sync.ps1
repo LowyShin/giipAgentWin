@@ -87,7 +87,7 @@ function Find-Config {
 }
 
 # ???? ?????? 'real'?????.
-$targetBranch = "real" 
+$targetBranch = "main" 
 
 $configPath = Find-Config -StartPath $RepoPath
 if ($configPath) {
