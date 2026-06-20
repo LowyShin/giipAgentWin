@@ -35,13 +35,13 @@ Write-GiipLog "INFO" "[CollectEnhancedMetrics] Starting detailed performance met
 try {
     # 1. cpu_usage_detail
     $cpu = Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'"
-    $cpuJson = @{
+    $cpuDetailObj = @{
         user_pct     = [double]$cpu.PercentUserTime
         system_pct   = [double]$cpu.PercentPrivilegedTime
         idle_pct     = [double]$cpu.PercentIdleTime
         iowait_pct   = 0.0
         steal_pct    = 0.0
-    } | ConvertTo-Json -Compress
+    }
 
     # 2. mem_usage_detail
     $cs = Get-CimInstance Win32_ComputerSystem
@@ -51,25 +51,25 @@ try {
     $availMb = [double]$perfMem.AvailableMBytes
     $usedMb = $totalMb - $availMb
     
-    $memJson = @{
+    $memDetailObj = @{
         total_mb   = $totalMb
         used_mb    = $usedMb
         free_mb    = $availMb
         shared_mb  = 0
         buffers_mb = 0
         cached_mb  = 0
-    } | ConvertTo-Json -Compress
+    }
 
     # 3. disk_usage_partition
     $disks = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3"
-    $diskPartitions = @()
+    $diskPartitionsList = @()
     foreach ($disk in $disks) {
         $size = $disk.Size
         $free = $disk.FreeSpace
         if ($size -gt 0) {
             $used = $size - $free
             $pct = [math]::Round(($used / $size) * 100, 2)
-            $diskPartitions += @{
+            $diskPartitionsList += @{
                 device   = $disk.DeviceID
                 total    = ("{0:N1}G" -f ($size / 1GB))
                 used     = ("{0:N1}G" -f ($used / 1GB))
@@ -79,13 +79,12 @@ try {
             }
         }
     }
-    $diskJson = $diskPartitions | ConvertTo-Json -Compress
 
     # 4. io_statistics
     $pDisks = Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk | Where-Object { $_.Name -ne "_Total" }
-    $ioStats = @()
+    $ioStatsList = @()
     foreach ($pd in $pDisks) {
-        $ioStats += @{
+        $ioStatsList += @{
             device     = $pd.Name
             tps        = [double]$pd.DiskTransfersPerSec
             read_kb_s  = [math]::Round($pd.DiskReadBytesPerSec / 1KB, 2)
@@ -93,16 +92,15 @@ try {
             avg_wait   = [math]::Round($pd.AverageDiskSecPerTransfer * 1000, 2)
         }
     }
-    $ioJson = $ioStats | ConvertTo-Json -Compress
 
     # 5. network_traffic
     $netAdapters = Get-NetAdapterStatistics -ErrorAction SilentlyContinue
-    $netTraffic = @()
+    $netTrafficList = @()
     if ($netAdapters) {
         foreach ($na in $netAdapters) {
             $rxPackets = if ($null -ne $na.ReceivedPackets) { [double]$na.ReceivedPackets } else { 0.0 }
             $txPackets = if ($null -ne $na.SentPackets) { [double]$na.SentPackets } else { 0.0 }
-            $netTraffic += @{
+            $netTrafficList += @{
                 interface   = $na.Name
                 rx_bytes    = [double]$na.ReceivedBytes
                 tx_bytes    = [double]$na.SentBytes
@@ -113,7 +111,7 @@ try {
     } else {
         $wmiNet = Get-CimInstance Win32_PerfRawData_Tcpip_NetworkInterface
         foreach ($wn in $wmiNet) {
-            $netTraffic += @{
+            $netTrafficList += @{
                 interface   = $wn.Name
                 rx_bytes    = [double]$wn.BytesReceivedPersec
                 tx_bytes    = [double]$wn.BytesSentPersec
@@ -122,16 +120,15 @@ try {
             }
         }
     }
-    $netJson = $netTraffic | ConvertTo-Json -Compress
 
     # 6. top_processes
     $perfProcs = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | 
                  Where-Object { $_.Name -notmatch "_Total|Idle" } | 
                  Sort-Object -Property PercentProcessorTime -Descending | 
                  Select-Object -First 10
-    $topProcs = @()
+    $topProcsList = @()
     foreach ($pp in $perfProcs) {
-        $topProcs += @{
+        $topProcsList += @{
             pid      = [int]$pp.IDProcess
             ppid     = [int]$pp.CreatingProcessID
             cpu_pct  = [double]$pp.PercentProcessorTime
@@ -139,20 +136,82 @@ try {
             cmd      = $pp.Name
         }
     }
-    $topProcsJson = $topProcs | ConvertTo-Json -Compress
 
-    # Upload all metrics to KVS
-    Write-GiipLog "INFO" "[CollectEnhancedMetrics] Uploading performance details to KVS..."
-    
-    Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "cpu_usage_detail" -Value $cpuJson | Out-Null
-    Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "mem_usage_detail" -Value $memJson | Out-Null
-    Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "disk_usage_partition" -Value $diskJson | Out-Null
-    Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "io_statistics" -Value $ioJson | Out-Null
-    Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "network_traffic" -Value $netJson | Out-Null
-    Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "top_processes" -Value $topProcsJson | Out-Null
+    # 7. Dashboard Compatibility Top-level Fields
+    $cpuUsage = [math]::Round(100.0 - [double]$cpu.PercentIdleTime, 2)
+    if ($cpuUsage -lt 0) { $cpuUsage = 0.0 }
 
-    Write-GiipLog "INFO" "[CollectEnhancedMetrics] Successfully collected and uploaded all performance metrics."
+    $cpuCores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfCores -Sum).Sum
+    if (-not $cpuCores) { $cpuCores = 1 }
 
+    $memUsage = [math]::Round(($usedMb / $totalMb) * 100, 2)
+
+    $systemDisk = $diskPartitionsList | Where-Object { $_.device -eq "C:" }
+    if (-not $systemDisk -and $diskPartitionsList.Count -gt 0) { $systemDisk = $diskPartitionsList[0] }
+    $diskUsagePct = 0.0
+    if ($systemDisk) {
+        if ($systemDisk.use_pct -match "([0-9.]+)") {
+            $diskUsagePct = [double]$Matches[1]
+        }
+    }
+
+    $connCount = 0
+    try {
+        $connCount = (Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue).Count
+        if ($null -eq $connCount) { $connCount = 0 }
+    } catch {}
+
+    $totalProcessCount = (Get-Process).Count
+
+    $uptimeStr = "N/A"
+    try {
+        $osInfo = Get-CimInstance Win32_OperatingSystem
+        $uptimeSpan = (Get-Date) - $osInfo.LastBootUpTime
+        $uptimeStr = "{0}d {1}h {2}m" -f $uptimeSpan.Days, $uptimeSpan.Hours, $uptimeSpan.Minutes
+    } catch {}
+
+    # Build Unified Payload
+    $unifiedPayload = @{
+        cpu_usage           = $cpuUsage
+        mem_usage           = $memUsage
+        disk_usage          = $diskUsagePct
+        conn_count          = $connCount
+        total_process_count = $totalProcessCount
+        status              = "NORMAL"
+        
+        cpu = @{
+            cores     = $cpuCores
+            usage_pct = $cpuUsage
+        }
+        
+        memory = @{
+            total_mb  = $totalMb
+            used_mb   = $usedMb
+            free_mb   = $availMb
+            usage_pct = $memUsage
+        }
+        
+        system = @{
+            os       = "Windows"
+            uptime   = $uptimeStr
+            hostname = $env:COMPUTERNAME
+        }
+        
+        cpu_usage_detail     = $cpuDetailObj
+        mem_usage_detail     = $memDetailObj
+        disk_usage_partition = $diskPartitionsList
+        io_statistics        = $ioStatsList
+        network_traffic      = $netTrafficList
+        top_processes        = $topProcsList
+    }
+
+    $unifiedJson = $unifiedPayload | ConvertTo-Json -Depth 5 -Compress
+
+    # Upload all metrics under a single factor to KVS
+    Write-GiipLog "INFO" "[CollectEnhancedMetrics] Uploading unified performance metrics to KVS (Factor: performance_metrics)..."
+    Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "performance_metrics" -Value $unifiedJson | Out-Null
+
+    Write-GiipLog "INFO" "[CollectEnhancedMetrics] Successfully collected and uploaded unified performance metrics."
 }
 catch {
     Write-GiipLog "ERROR" "[CollectEnhancedMetrics] Unexpected error collecting performance details: $_"
