@@ -15,7 +15,7 @@ if (-not (Test-Path $targetScript)) {
 
 $taskName = "GIIP Agent Task (v3)"
 $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File `"$targetScript`""
-$trigger = New-ScheduledTaskTrigger -Once -At "00:00" -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
+$trigger = New-ScheduledTaskTrigger -Once -At "00:00" -RepetitionInterval (New-TimeSpan -Minutes 5)
 # Run as current user (Interactive or Background depending on login)
 # For specific User account execution without password, usually requires 'LogonType Interactive' or S4U.
 # Assuming this is run by the user who wants to run the agent.
