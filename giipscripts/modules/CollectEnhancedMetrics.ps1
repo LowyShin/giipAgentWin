@@ -149,10 +149,12 @@ try {
     $systemDisk = $diskPartitionsList | Where-Object { $_.device -eq "C:" }
     if (-not $systemDisk -and $diskPartitionsList.Count -gt 0) { $systemDisk = $diskPartitionsList[0] }
     $diskUsagePct = 0.0
+    $diskH = "N/A"
     if ($systemDisk) {
         if ($systemDisk.use_pct -match "([0-9.]+)") {
             $diskUsagePct = [double]$Matches[1]
         }
+        $diskH = "$($systemDisk.used) / $($systemDisk.total) ($($systemDisk.use_pct))"
     }
 
     $connCount = 0
@@ -171,10 +173,12 @@ try {
     } catch {}
 
     # Build Unified Payload
+    $buildVersion = (Get-CimInstance Win32_OperatingSystem).BuildNumber
     $unifiedPayload = @{
         cpu_usage           = $cpuUsage
         mem_usage           = $memUsage
         disk_usage          = $diskUsagePct
+        disk_h              = $diskH
         conn_count          = $connCount
         total_process_count = $totalProcessCount
         status              = "NORMAL"
@@ -195,6 +199,7 @@ try {
             os       = "Windows"
             uptime   = $uptimeStr
             hostname = $env:COMPUTERNAME
+            build    = $buildVersion
         }
         
         cpu_usage_detail     = $cpuDetailObj
