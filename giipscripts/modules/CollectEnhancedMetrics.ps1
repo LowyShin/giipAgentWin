@@ -173,7 +173,7 @@ try {
     } catch {}
 
     # Build Unified Payload
-    $buildVersion = (Get-CimInstance Win32_OperatingSystem).BuildNumber
+    $buildVersion = (Get-CimInstance Win32_OperatingSystem).Version
     $unifiedPayload = @{
         cpu_usage           = $cpuUsage
         mem_usage           = $memUsage
