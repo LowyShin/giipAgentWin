@@ -137,6 +137,22 @@ try {
         }
     }
 
+    # 6-2. top_mem_processes
+    $perfMemProcs = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | 
+                     Where-Object { $_.Name -notmatch "_Total|Idle" } | 
+                     Sort-Object -Property WorkingSetPrivate -Descending | 
+                     Select-Object -First 10
+    $topMemProcsList = @()
+    foreach ($pp in $perfMemProcs) {
+        $topMemProcsList += @{
+            pid      = [int]$pp.IDProcess
+            ppid     = [int]$pp.CreatingProcessID
+            cpu_pct  = [double]$pp.PercentProcessorTime
+            mem_pct  = [math]::Round(([double]$pp.WorkingSetPrivate / $totalMem) * 100, 2)
+            cmd      = $pp.Name
+        }
+    }
+
     # 7. Dashboard Compatibility Top-level Fields
     $cpuUsage = [math]::Round(100.0 - [double]$cpu.PercentIdleTime, 2)
     if ($cpuUsage -lt 0) { $cpuUsage = 0.0 }
@@ -208,6 +224,7 @@ try {
         io_statistics        = $ioStatsList
         network_traffic      = $netTrafficList
         top_processes        = $topProcsList
+        top_mem_processes    = $topMemProcsList
     }
 
     # Upload all metrics under a single factor to KVS (Pass the hashtable directly to avoid double stringification)
