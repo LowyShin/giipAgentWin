@@ -51,8 +51,8 @@ function Report-TaskResult {
     
     # SP: pApiKVSPutbySk
     # Command: KVSPut
-    # Params: kType kKey kFactor kValue
-    $cmdText = "KVSPut kType kKey kFactor kValue"
+    # Params: kType kKey kFactor
+    $cmdText = "KVSPut kType kKey kFactor"
     
     $kValueObj = @{
         qsn    = $Qsn
