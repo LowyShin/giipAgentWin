@@ -51,8 +51,11 @@ function Report-TaskResult {
     
     # SP: pApiKVSPutbySk
     # Command: KVSPut
-    # Params: kType kKey kFactor
-    $cmdText = "KVSPut kType kKey kFactor"
+    # Params: kType kKey kFactor kValue  (kValue 필수 — 표준 시그니처)
+    # Ref: giipprj/giipdb/docs/10_Standards/DEVELOPMENT_RULES_INDEX.md (L58, L272)
+    #      giipAgentWin 'real' branch lib/Worker.ps1 (정상 기준)
+    # 주의: 커밋 121a386이 kValue를 제거(4→3)하여 표준과 어긋났으므로 복원함.
+    $cmdText = "KVSPut kType kKey kFactor kValue"
     
     $kValueObj = @{
         qsn    = $Qsn
