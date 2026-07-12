@@ -169,6 +169,40 @@ $env:LOCALAPPDATA\GIIP\logs\
 
 **권장:** PowerShell 에이전트 사용
 
+## 🗂️ 레포 / 기밀 분리 구조 (중요 — 혼동 주의)
+
+이 폴더(`giipAgentWin/`)는 **그 자체가 독립 git 저장소**다: `git@github.com:LowyShin/giipAgentWin.git`.
+여러 서버·여러 사용자가 이 저장소를 clone 해 **공용(public) 스크립트**를 공유한다.
+
+- ✅ **공용(저장소에 커밋)**: `giipscripts/*.ps1`, `lib/*.ps1`, `giipAgent.cfg.example`(플레이스홀더 템플릿) 등 코드.
+- 🔒 **기밀(저장소 밖, 절대 커밋 금지)**: 실 `giipAgent.cfg`(각자의 `sk`/`lssn`/Azure SPN 시크릿).
+  이 저장소 **폴더 밖**에 둔다 → ① `giipAgentWin`의 **부모 디렉터리**(예: `…/giipAgent/giipAgent.cfg`),
+  또는 ② `%USERPROFILE%\giipAgent.cfg`. 설정 로더(`lib/Common.ps1: Get-GiipConfig`)가 이 순서로 찾으며,
+  머리글에 `SAMPLE`이 있으면 **템플릿으로 간주해 건너뛴다**(실수로 예제를 실설정으로 쓰는 것 방지).
+
+> ⚠️ **자주 하는 오해:** `giipAgent/` **루트**에서 `git status`를 돌리면 "not a git repository"가 나온다.
+> 그렇다고 스크립트가 비-git인 게 **아니다** — 저장소는 한 단계 아래 `giipAgent/giipAgentWin/`이다.
+> 정본 코드는 `LowyShin/giipAgentWin`에 있고, 기밀만 부모 폴더(비-git)에 있다.
+
+## 💰 Azure 비용 수집기 (멀티유저)
+
+`giipscripts/azure-cost-put-win.ps1` — Azure Cost Management API로 구독 비용을 수집해 GIIP KVS(`kFactor=azure_cost`)에 적재하는 **독립 실행형** 스크립트. **서비스별(`by_service`)과 리소스 그룹별(`by_resource_group`) 두 축**을 함께 수집한다.
+
+사용자마다 **자기 계정 정보**로 수집하려면:
+
+1. `giipAgent.cfg.example`을 **저장소 밖**으로 복사한다(위 "레포/기밀 분리" 참고): 부모 폴더 또는 `%USERPROFILE%\giipAgent.cfg`.
+2. 복사본에 본인 값을 채운다: `sk`, `lssn`, 그리고 무인 실행용 Azure 서비스 주체 `az_subscription`/`az_client_id`/`az_client_secret`/`az_tenant_id`(생략 시 대화형 `az login` 세션 사용).
+3. 실행/등록:
+   ```powershell
+   # 수동 실행(최근 7일)
+   .\giipscripts\azure-cost-put-win.ps1 -Days 7
+   # 매일 06:00 예약 작업 등록
+   .\giipscripts\azure-cost-put-win.ps1 -Register -AtTime "06:00"
+   ```
+
+- 조회 페이지(giipv3): 서비스별 `/{locale}/azure-cost`, 리소스 그룹별 `/{locale}/azure-cost-rg`.
+- 상세 사양: `giipdb/docs/30_Specs/AZURE_COST_COLLECTOR_SPECIFICATION.md`(giipdb 저장소).
+
 ## 📞 지원
 
 - **GitHub**: https://github.com/LowyShin/giipAgentWin
