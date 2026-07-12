@@ -8,6 +8,8 @@
 # 1. Copy this file to the PARENT directory of giipAgentWin
 # 2. Or place it in %USERPROFILE%\giipAgent.cfg
 # 3. Update the 'sk' and 'lssn' values in the copied file.
+# 4. (Azure cost collection only) Uncomment and fill the "Azure Cost
+#    Collector" section at the bottom — see the notes there.
 # ===================================================================
 
 # V2 API Endpoint
@@ -29,13 +31,20 @@ debug = "0"
 branch = "real"
 
 # ===================================================================
-# Azure Cost Collector (azure-cost-put-win.ps1) — OPTIONAL
+# Azure Cost Collector (azure-cost-put-win.ps1)
 # ===================================================================
-# Target subscription (optional; else uses current az default subscription)
-# az_subscription = "00000000-0000-0000-0000-000000000000"
+# Used for UNATTENDED / scheduled cost collection via a service principal.
+#   - Fill ALL of az_client_id/az_client_secret/az_tenant_id (and optionally
+#     az_subscription) to enable non-interactive scheduled runs.
+#   - Leave them commented to fall back to your current interactive 'az login'.
+# ⚠️ Do NOT uncomment while the values are still placeholders — the script
+#    would attempt an SPN login with fake credentials and fail. Uncomment only
+#    once you paste REAL values.
 #
-# Service principal for non-interactive scheduled runs (optional).
-# If omitted, the script relies on an existing interactive 'az login'.
-# az_client_id     = "YOUR_APP_ID"
-# az_client_secret = "YOUR_APP_SECRET"
-# az_tenant_id     = "YOUR_TENANT_ID"
+# Target subscription (optional; else uses the az default subscription):
+# az_subscription  = "00000000-0000-0000-0000-000000000000"
+#
+# Service principal (needs the 'Cost Management Reader' role on the subscription):
+# az_client_id     = "00000000-0000-0000-0000-000000000000"   # app (client) ID
+# az_client_secret = "your-client-secret-value"               # client secret VALUE (not the ID)
+# az_tenant_id     = "00000000-0000-0000-0000-000000000000"   # directory (tenant) ID
