@@ -27,3 +27,15 @@ debug = "0"
 
 # Git Branch for Agent Auto-Update
 branch = "real"
+
+# ===================================================================
+# Azure Cost Collector (azure-cost-put-win.ps1) — OPTIONAL
+# ===================================================================
+# Target subscription (optional; else uses current az default subscription)
+# az_subscription = "00000000-0000-0000-0000-000000000000"
+#
+# Service principal for non-interactive scheduled runs (optional).
+# If omitted, the script relies on an existing interactive 'az login'.
+# az_client_id     = "YOUR_APP_ID"
+# az_client_secret = "YOUR_APP_SECRET"
+# az_tenant_id     = "YOUR_TENANT_ID"
