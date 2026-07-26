@@ -134,9 +134,15 @@ Write-Host "[DIAG] JSON preview: $($json.Substring(0, [Math]::Min(400, $json.Len
 # KVS  (show endpoint and payload)
 if ($KVSConfig['Enabled'] -eq 'true') {
   # Build apirule.md compliant request: text , jsondata  
-  $kvspText = "KVSPut kType kKey kFactor"
-  #  $summary JSON  (value  )
-  $kvspJson = $summary | ConvertTo-Json -Depth 8 -Compress
+  $kvspText = "KVSPut kType kKey kFactor kValue"
+  # jsondata MUST contain kType/kKey/kFactor/kValue; the actual data goes in kValue.
+  # (Server stores kValue as empty {} if this field is missing -> silent data loss.)
+  $kvspJson = @{
+    kType   = $KVSConfig['KType']
+    kKey    = $KVSConfig['KKey']
+    kFactor = $KFactor
+    kValue  = $summary
+  } | ConvertTo-Json -Depth 8 -Compress
 
   $postParams = [ordered]@{
     text     = $kvspText

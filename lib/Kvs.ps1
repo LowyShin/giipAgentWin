@@ -38,7 +38,7 @@ function Invoke-GiipKvsPut {
     } catch {}
 
     # Standard Command Text
-    $cmdText = "KVSPut kType kKey kFactor"
+    $cmdText = "KVSPut kType kKey kFactor kValue"
     
     # Call API (Assumes Common.ps1 is loaded)
     $response = Invoke-GiipApiV2 -Config $Config -CommandText $cmdText -JsonData $jsonPayload

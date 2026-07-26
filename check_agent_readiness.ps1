@@ -50,17 +50,42 @@ if (Test-Path $commentPath) {
     Write-Host " addIssueComment.ps1:   (giipdb/mgmt/addIssueComment.ps1)" -ForegroundColor Red
 }
 
-# 5.    
-$configPath = Join-Path $BaseDir "giipAgent.cfg"
-if (Test-Path $configPath) {
-    $config = Get-Content $configPath | ConvertFrom-StringData
+# 5. Config (same lookup policy as runtime)
+$parentPath = Join-Path (Split-Path -Path $BaseDir -Parent) "giipAgent.cfg"
+$userPath = Join-Path $env:USERPROFILE "giipAgent.cfg"
+$localPath = Join-Path $BaseDir "giipAgent.cfg"
+
+$configPath = $null
+foreach ($candidate in @($parentPath, $userPath)) {
+    if (-not (Test-Path $candidate)) { continue }
+    $head = Get-Content $candidate -TotalCount 10 -ErrorAction SilentlyContinue
+    if ($head -match "SAMPLE") { continue }
+    $configPath = $candidate
+    break
+}
+
+if (-not $configPath -and (Test-Path $localPath)) {
+    # Match runtime fallback policy: local config is accepted as last resort.
+    $configPath = $localPath
+}
+
+if ($configPath) {
+    $config = @{}
+    Get-Content $configPath -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($_ -match '^\s*([^=:#\s\[]+)\s*[:=]\s*(.*)$') {
+            $k = $Matches[1].Trim().ToLower()
+            $v = $Matches[2].Trim().Trim('"')
+            $config[$k] = $v
+        }
+    }
+
     if ($config.sk) {
-        Write-Host " SK : giipAgent.cfg " -ForegroundColor Green
+        Write-Host " SK : giipAgent.cfg found ($configPath)" -ForegroundColor Green
     } else {
-        Write-Host " SK : giipAgent.cfg sk  ." -ForegroundColor Red
+        Write-Host " SK : giipAgent.cfg found but sk is missing ($configPath)" -ForegroundColor Red
     }
 } else {
-    Write-Host "  : giipAgent.cfg " -ForegroundColor Red
+    Write-Host "  : giipAgent.cfg not found (checked parent/userprofile/local)" -ForegroundColor Red
 }
 
 Write-Host "`n ."

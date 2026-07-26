@@ -156,7 +156,7 @@ Write-Host "[DIAG] JSON preview: $($json.Substring(0, [Math]::Min(400, $json.Len
 if ($KVSConfig['Enabled'] -eq 'true') {
   # Build apirule.md compliant request: text  , jsondata  
   # NOTE: kValue text   (jsondata  )
-  $kvspText = "KVSPut kType kKey kFactor"
+  $kvspText = "KVSPut kType kKey kFactor kValue"
   
   # jsondata   
   $kvspJsonData = @{
