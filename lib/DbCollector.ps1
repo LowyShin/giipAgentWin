@@ -26,6 +26,7 @@ function Get-GiipDbMetrics {
     $port = if ($DbInfo.port) { $DbInfo.port } else { $DbInfo.db_port }
     $user = if ($DbInfo.user) { $DbInfo.user } else { $DbInfo.db_user }
     $pass = if ($DbInfo.pass) { $DbInfo.pass } else { $DbInfo.db_password }
+    $dbName = if ($DbInfo.db_database) { $DbInfo.db_database } elseif ($DbInfo.db_name) { $DbInfo.db_name } else { $null }
 
     Write-GiipLog "INFO" "Collecting metrics for $dbType on $ip : $port"
 
@@ -44,6 +45,10 @@ function Get-GiipDbMetrics {
                 $connBuilder["Password"] = $pass
             } else {
                 $connBuilder["Integrated Security"] = $true
+            }
+            if ($dbName -and $dbName.Trim()) {
+                # Prefer managed DB name when available to avoid master/default-db permission issues.
+                $connBuilder["Initial Catalog"] = $dbName
             }
             $connBuilder["Connect Timeout"] = 15
             # Ensure compatibility with newer drivers/local certs

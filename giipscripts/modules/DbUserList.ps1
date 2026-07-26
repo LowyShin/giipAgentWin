@@ -71,7 +71,10 @@ try {
                     # Use SqlConnectionStringBuilder to safely handle special characters in password
                     $connStrBuilder = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
                     $connStrBuilder["Data Source"] = "$dbHost,$port"
-                    $connStrBuilder["Initial Catalog"] = "master"
+                    $dbName = if ($db.db_database) { $db.db_database } elseif ($db.db_name) { $db.db_name } else { $null }
+                    if ($dbName -and $dbName.Trim()) {
+                        $connStrBuilder["Initial Catalog"] = $dbName
+                    }
                     $connStrBuilder["User ID"] = $user
                     $connStrBuilder["Password"] = $pass
                     $connStrBuilder["TrustServerCertificate"] = $true
