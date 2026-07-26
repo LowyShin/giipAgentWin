@@ -32,7 +32,8 @@ foreach ($db in $dbList) {
     if ($db.db_type -ne 'MSSQL') { continue }
     
     try {
-        $connStr = "Server=$($db.db_host),$($db.db_port);Database=master;User Id=$($db.db_user);Password=$($db.db_password);TrustServerCertificate=True;Connection Timeout=10;"
+        $dbName = if ($db.db_database) { $db.db_database } elseif ($db.db_name) { $db.db_name } else { "master" }
+        $connStr = "Server=$($db.db_host),$($db.db_port);Database=$dbName;User Id=$($db.db_user);Password=$($db.db_password);TrustServerCertificate=True;Connection Timeout=10;"
         $conn = New-Object System.Data.SqlClient.SqlConnection($connStr)
         $conn.Open()
         

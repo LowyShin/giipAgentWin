@@ -30,12 +30,15 @@ function Get-MSSQLConnections {
         [Parameter(Mandatory = $true)][string]$DbHost,
         [Parameter(Mandatory = $true)][int]$Port,
         [Parameter(Mandatory = $true)][string]$User,
-        [Parameter(Mandatory = $true)][string]$Pass
+        [Parameter(Mandatory = $true)][string]$Pass,
+        [string]$Database
     )
     
     $builder = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
     $builder.DataSource = "$DbHost,$Port"
-    $builder.InitialCatalog = "master"
+    if ($Database -and $Database.Trim()) {
+        $builder.InitialCatalog = $Database
+    }
     $builder.UserID = $User
     $builder.Password = $Pass
     $builder.TrustServerCertificate = $true
@@ -215,7 +218,8 @@ try {
         try {
             $connections = @()
             if ($db.db_type -eq 'MSSQL') {
-                $connections = Get-MSSQLConnections -DbHost $db.db_host -Port $db.db_port -User $db.db_user -Pass $db.db_password
+                $dbName = if ($db.db_database) { $db.db_database } elseif ($db.db_name) { $db.db_name } else { $null }
+                $connections = Get-MSSQLConnections -DbHost $db.db_host -Port $db.db_port -User $db.db_user -Pass $db.db_password -Database $dbName
             }
             elseif ($db.db_type -match 'MySQL|MariaDB') {
                 $connections = Get-MySQLConnections -DbHost $db.db_host -Port $db.db_port -User $db.db_user -Pass $db.db_password
