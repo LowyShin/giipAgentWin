@@ -18,6 +18,11 @@ param(
     [string]$AtTime = "06:00",       # Daily run time (for -Register)
     [string]$SubscriptionId,         # Target subscription (else cfg az_subscription / current)
     [int]$Days = 0,                  # Last N days (Custom); 0 = MonthToDate
+                                      # WARNING (giip-762, 2026-07-26): -Days>0 with the default -Factor
+                                      # overwrites the SAME KVS coordinate the daily 06:00 job uses, which
+                                      # hides the "월말 예상" projection card on azure-cost until the next
+                                      # MonthToDate run. For ad-hoc/debug runs, pass a different -Factor
+                                      # (e.g. azure_cost_test) instead of the production one.
     [string]$Factor = "azure_cost",  # KVS kFactor
     [string]$OutFile                 # Raw JSON output path (else giipLogs\azure\...)
 )
@@ -91,48 +96,52 @@ if ($Days -gt 0) {
 $url = "https://management.azure.com/subscriptions/$subId/providers/Microsoft.CostManagement/query?api-version=2023-11-01"
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
-# --- Cost Management query helper (grouped by a single dimension) --------------
-# Runs one ActualCost query grouped by $GroupDimension over the shared timeframe.
+# --- Cost Management query helper (grouped by 1-2 dimensions) ------------------
+# Runs one ActualCost query grouped by $GroupDimensions over the shared timeframe.
+# Cost Management's `grouping` array accepts up to 2 entries per query (Query -
+# Usage REST API spec), so a two-dimension request (e.g. ResourceGroupName +
+# ServiceName) returns both columns in the same row set instead of two calls.
 # Cost Management enforces strict 429 rate limits -> retry up to 5x, 35s backoff.
 # az rest --body @file avoids shell-quoting issues (BOM-less UTF-8 temp file).
 # Returns @{ Raw = <json string>; Result = <parsed object> }, or hard-exits(1).
 function Invoke-CmQuery {
-    param([Parameter(Mandatory)][string]$GroupDimension)
+    param([Parameter(Mandatory)][string[]]$GroupDimensions)
 
+    $label = $GroupDimensions -join "+"
     $dataset = @{
         granularity = "None"
         aggregation = @{ totalCost = @{ name = "PreTaxCost"; function = "Sum" } }
-        grouping    = @( @{ type = "Dimension"; name = $GroupDimension } )
+        grouping    = @( $GroupDimensions | ForEach-Object { @{ type = "Dimension"; name = $_ } } )
     }
     $bodyObj = @{ type = "ActualCost"; timeframe = $timeframe; dataset = $dataset }
     if ($timePeriod) { $bodyObj.timePeriod = $timePeriod }
     $bodyJson = $bodyObj | ConvertTo-Json -Depth 10 -Compress
 
-    $tmpBody = Join-Path $env:TEMP ("az_cm_body_{0}_{1}.json" -f $GroupDimension, $today.ToString("yyyyMMddHHmmssfff"))
+    $tmpBody = Join-Path $env:TEMP ("az_cm_body_{0}_{1}.json" -f ($label -replace '\+', '_'), $today.ToString("yyyyMMddHHmmssfff"))
     [System.IO.File]::WriteAllText($tmpBody, $bodyJson, $utf8NoBom)
 
-    Write-GiipLog "INFO" "Querying Cost Management ($GroupDimension) for $subName ($subId): $periodDesc"
+    Write-GiipLog "INFO" "Querying Cost Management ($label) for $subName ($subId): $periodDesc"
     $rawJson = $null
     for ($attempt = 1; $attempt -le 5; $attempt++) {
         $rawJson = (az rest --method post --url $url --headers "Content-Type=application/json" --body "@$tmpBody" --only-show-errors --output json 2>&1 | Out-String)
         if ($LASTEXITCODE -eq 0 -and $rawJson -notmatch '"?429"?') { break }
         if ($rawJson -match '429') {
-            Write-GiipLog "WARN" "Rate-limited (429) on $GroupDimension. Retry $attempt/5 after 35s."
+            Write-GiipLog "WARN" "Rate-limited (429) on $label. Retry $attempt/5 after 35s."
             Start-Sleep -Seconds 35
             continue
         }
-        Write-GiipLog "ERROR" "Cost Management query ($GroupDimension) failed: $rawJson"
+        Write-GiipLog "ERROR" "Cost Management query ($label) failed: $rawJson"
         Remove-Item $tmpBody -ErrorAction SilentlyContinue
         exit 1
     }
     Remove-Item $tmpBody -ErrorAction SilentlyContinue
-    if (-not $rawJson -or $rawJson -match '429') { Write-GiipLog "ERROR" "Cost Management query ($GroupDimension) still failing (429)."; exit 1 }
+    if (-not $rawJson -or $rawJson -match '429') { Write-GiipLog "ERROR" "Cost Management query ($label) still failing (429)."; exit 1 }
 
     return @{ Raw = $rawJson; Result = ($rawJson | ConvertFrom-Json) }
 }
 
 # --- Query #1: by ServiceName (existing axis -> by_service) -------------------
-$svcQ   = Invoke-CmQuery -GroupDimension "ServiceName"
+$svcQ   = Invoke-CmQuery -GroupDimensions @("ServiceName")
 $rawJson = $svcQ.Raw
 $result  = $svcQ.Result
 $cols = @($result.properties.columns.name)
@@ -154,7 +163,7 @@ Write-GiipLog "INFO" "Saved raw cost JSON ($($rows.Count) service rows) -> $OutF
 
 # --- Query #2: by ResourceGroupName (new axis -> by_resource_group) -----------
 # Feeds giipv3 azure-cost-rg/page.tsx (by_resource_group[{resource_group,cost}] + resource_group_count).
-$rgQ      = Invoke-CmQuery -GroupDimension "ResourceGroupName"
+$rgQ      = Invoke-CmQuery -GroupDimensions @("ResourceGroupName")
 $rgResult = $rgQ.Result
 $rgCols   = @($rgResult.properties.columns.name)
 $rgRows   = @($rgResult.properties.rows)
@@ -176,6 +185,50 @@ if ($iRgCost -ge 0) {
     Write-GiipLog "WARN" "ResourceGroupName query returned no PreTaxCost column; by_resource_group left empty."
 }
 Write-GiipLog "INFO" "Collected $($byResourceGroup.Count) resource-group rows."
+
+# --- Query #3: by ResourceGroupName + ServiceName (cross axis, giip #766) -----
+# Matches the Azure Portal Cost Analysis view ("group by resource group, then
+# service"): for each RG, the list of services and their cost. A single query
+# with a 2-entry grouping array returns both dimensions per row (Query - Usage
+# REST API: grouping accepts up to 2 dimensions), so no extra per-RG calls or
+# 429 risk are introduced versus the by_resource_group axis above.
+$rgSvcQ      = Invoke-CmQuery -GroupDimensions @("ResourceGroupName", "ServiceName")
+$rgSvcResult = $rgSvcQ.Result
+$rgSvcCols   = @($rgSvcResult.properties.columns.name)
+$rgSvcRows   = @($rgSvcResult.properties.rows)
+$iRgSvcCost  = [array]::IndexOf($rgSvcCols, "PreTaxCost")
+$iRgSvcRg    = [array]::IndexOf($rgSvcCols, "ResourceGroupName")
+if ($iRgSvcRg -lt 0) { $iRgSvcRg = [array]::IndexOf($rgSvcCols, "ResourceGroup") }  # API shape fallback
+$iRgSvcSvc   = [array]::IndexOf($rgSvcCols, "ServiceName")
+
+$byResourceGroupService = @()
+if ($iRgSvcCost -ge 0) {
+    $rgSvcFlat = foreach ($row in $rgSvcRows) {
+        $rgName  = if ($iRgSvcRg -ge 0 -and $row[$iRgSvcRg]) { [string]$row[$iRgSvcRg] } else { "" }
+        $svcName = if ($iRgSvcSvc -ge 0 -and $row[$iRgSvcSvc]) { [string]$row[$iRgSvcSvc] } else { "All" }
+        [PSCustomObject]@{
+            resource_group = if ($rgName) { $rgName } else { "(unassigned)" }
+            service        = $svcName
+            cost           = [math]::Round([double]$row[$iRgSvcCost], 4)
+        }
+    }
+    $rgGroups = @($rgSvcFlat | Group-Object resource_group)
+
+    $rgSvcSummaries = foreach ($grp in $rgGroups) {
+        $svcRows = @($grp.Group | Sort-Object cost -Descending)
+        $rgTotal = [math]::Round((($svcRows | Measure-Object cost -Sum).Sum), 4)
+        [PSCustomObject]@{
+            resource_group = $grp.Name
+            cost           = $rgTotal
+            service_count  = $svcRows.Count
+            services       = @($svcRows | Select-Object service, cost)
+        }
+    }
+    $byResourceGroupService = @($rgSvcSummaries | Sort-Object cost -Descending)
+} else {
+    Write-GiipLog "WARN" "ResourceGroupName+ServiceName query returned no PreTaxCost column; by_resource_group_service left empty."
+}
+Write-GiipLog "INFO" "Collected $($byResourceGroupService.Count) resource-group x service groups."
 
 # --- Summarize (this becomes kValue) -----------------------------------------
 $services = foreach ($row in $rows) {
@@ -199,6 +252,7 @@ $summary = [PSCustomObject]@{
     by_service           = $services
     resource_group_count = $byResourceGroup.Count
     by_resource_group    = $byResourceGroup
+    by_resource_group_service = $byResourceGroupService
     collected_at         = $today.ToString("s")
 }
 
