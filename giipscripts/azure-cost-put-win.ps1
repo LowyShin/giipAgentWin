@@ -23,6 +23,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Keep native command stderr as captured text so retry logic can inspect it.
+if ($null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
 
 # --- Resolve paths and load shared libraries ---------------------------------
 $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
@@ -33,44 +37,61 @@ $Global:BaseDir = $AgentRoot                                # so Get-GiipConfig 
 . (Join-Path $LibDir "Common.ps1")   # Get-GiipConfig, Invoke-GiipApiV2, Write-GiipLog
 . (Join-Path $LibDir "Kvs.ps1")      # Invoke-GiipKvsPut
 
+# --- Persistent run log for Task Scheduler diagnostics -----------------------
+$AzLogDir = Join-Path $AgentRoot "..\giipLogs\azure"
+if (-not (Test-Path $AzLogDir)) { New-Item -Path $AzLogDir -ItemType Directory -Force | Out-Null }
+$RunLogFile = Join-Path $AzLogDir ("azure_cost_task_{0}.log" -f (Get-Date).ToString("yyyyMMdd"))
+
+function Write-TaskLog {
+    param(
+        [Parameter(Mandatory)][string]$Level,
+        [Parameter(Mandatory)][string]$Message
+    )
+    $line = "[{0}] [{1}] {2}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Level, $Message
+    Write-GiipLog $Level $Message
+    Add-Content -Path $RunLogFile -Value $line -Encoding UTF8
+}
+
 # --- -Register: install a daily Scheduled Task for this script and exit -------
 if ($Register) {
     $self = $MyInvocation.MyCommand.Path
     $taskName = "GIIP Azure Cost Collector"
-    $arg = "-WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File `"$self`""
+    $arg = "-NoProfile -WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File `"$self`""
     $action    = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arg
     $trigger   = New-ScheduledTaskTrigger -Daily -At $AtTime
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
-    Write-GiipLog "INFO" "Registered Scheduled Task '$taskName' (daily at $AtTime)."
+    Write-TaskLog "INFO" "Registered Scheduled Task '$taskName' (daily at $AtTime)."
     return
 }
 
+try {
+
 # --- Load config -------------------------------------------------------------
 $Config = Get-GiipConfig
-if (-not $Config.lssn) { Write-GiipLog "ERROR" "lssn missing in giipAgent.cfg. Aborting."; exit 1 }
+if (-not $Config.lssn) { Write-TaskLog "ERROR" "lssn missing in giipAgent.cfg. Aborting."; exit 1 }
 
 # --- Ensure Azure CLI is available -------------------------------------------
 if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
-    Write-GiipLog "ERROR" "Azure CLI (az) not found in PATH. Install it or run 'az login' first."
+    Write-TaskLog "ERROR" "Azure CLI (az) not found in PATH. Install it or run 'az login' first."
     exit 1
 }
 
 # --- Optional: service-principal login (non-interactive scheduled runs) -------
 if ($Config.az_client_id -and $Config.az_client_secret -and $Config.az_tenant_id) {
-    Write-GiipLog "INFO" "Logging in with service principal ($($Config.az_client_id))."
+    Write-TaskLog "INFO" "Logging in with service principal ($($Config.az_client_id))."
     az login --service-principal --username $Config.az_client_id --password $Config.az_client_secret --tenant $Config.az_tenant_id --only-show-errors --output none
-    if ($LASTEXITCODE -ne 0) { Write-GiipLog "ERROR" "az service-principal login failed."; exit 1 }
+    if ($LASTEXITCODE -ne 0) { Write-TaskLog "ERROR" "az service-principal login failed."; exit 1 }
 }
 
 # --- Resolve subscription ----------------------------------------------------
 if (-not $SubscriptionId) { $SubscriptionId = $Config.az_subscription }
 if ($SubscriptionId) {
     az account set --subscription $SubscriptionId --only-show-errors
-    if ($LASTEXITCODE -ne 0) { Write-GiipLog "ERROR" "az account set failed for $SubscriptionId."; exit 1 }
+    if ($LASTEXITCODE -ne 0) { Write-TaskLog "ERROR" "az account set failed for $SubscriptionId."; exit 1 }
 }
 $acct = az account show --only-show-errors --output json 2>$null | ConvertFrom-Json
-if (-not $acct) { Write-GiipLog "ERROR" "No active Azure account. Run 'az login' or set service-principal creds."; exit 1 }
+if (-not $acct) { Write-TaskLog "ERROR" "No active Azure account. Run 'az login' or set service-principal creds."; exit 1 }
 $subId   = $acct.id
 $subName = $acct.name
 
@@ -111,24 +132,52 @@ function Invoke-CmQuery {
     $tmpBody = Join-Path $env:TEMP ("az_cm_body_{0}_{1}.json" -f $GroupDimension, $today.ToString("yyyyMMddHHmmssfff"))
     [System.IO.File]::WriteAllText($tmpBody, $bodyJson, $utf8NoBom)
 
-    Write-GiipLog "INFO" "Querying Cost Management ($GroupDimension) for $subName ($subId): $periodDesc"
+    Write-TaskLog "INFO" "Querying Cost Management ($GroupDimension) for $subName ($subId): $periodDesc"
     $rawJson = $null
+    $sleepSec = 30
     for ($attempt = 1; $attempt -le 5; $attempt++) {
-        $rawJson = (az rest --method post --url $url --headers "Content-Type=application/json" --body "@$tmpBody" --only-show-errors --output json 2>&1 | Out-String)
-        if ($LASTEXITCODE -eq 0 -and $rawJson -notmatch '"?429"?') { break }
-        if ($rawJson -match '429') {
-            Write-GiipLog "WARN" "Rate-limited (429) on $GroupDimension. Retry $attempt/5 after 35s."
-            Start-Sleep -Seconds 35
+        $tmpOut = Join-Path $env:TEMP ("az_cm_out_{0}_{1}.txt" -f $GroupDimension, $today.ToString("yyyyMMddHHmmssfff"))
+        $tmpErr = Join-Path $env:TEMP ("az_cm_err_{0}_{1}.txt" -f $GroupDimension, $today.ToString("yyyyMMddHHmmssfff"))
+
+        $proc = Start-Process -FilePath "az" -ArgumentList @(
+            "rest",
+            "--method", "post",
+            "--url", $url,
+            "--headers", "Content-Type=application/json",
+            "--body", "@$tmpBody",
+            "--only-show-errors",
+            "--output", "json"
+        ) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tmpOut -RedirectStandardError $tmpErr
+
+        $outText = if (Test-Path $tmpOut) { Get-Content -Path $tmpOut -Raw -ErrorAction SilentlyContinue } else { "" }
+        $errText = if (Test-Path $tmpErr) { Get-Content -Path $tmpErr -Raw -ErrorAction SilentlyContinue } else { "" }
+        Remove-Item $tmpOut, $tmpErr -ErrorAction SilentlyContinue
+
+        $rawJson = ("$outText`n$errText").Trim()
+        $nativeCode = $proc.ExitCode
+
+        if ($nativeCode -eq 0 -and $rawJson -notmatch '429|Too Many Requests') { break }
+        if ($rawJson -match '429|Too Many Requests') {
+            Write-TaskLog "WARN" "Rate-limited (429) on $GroupDimension. Retry $attempt/5 after ${sleepSec}s."
+            Start-Sleep -Seconds $sleepSec
+            $sleepSec = [Math]::Min($sleepSec + 15, 90)
             continue
         }
-        Write-GiipLog "ERROR" "Cost Management query ($GroupDimension) failed: $rawJson"
+        Write-TaskLog "ERROR" "Cost Management query ($GroupDimension) failed: $rawJson"
         Remove-Item $tmpBody -ErrorAction SilentlyContinue
         exit 1
     }
     Remove-Item $tmpBody -ErrorAction SilentlyContinue
-    if (-not $rawJson -or $rawJson -match '429') { Write-GiipLog "ERROR" "Cost Management query ($GroupDimension) still failing (429)."; exit 1 }
+    if (-not $rawJson -or $rawJson -match '429|Too Many Requests') { Write-TaskLog "ERROR" "Cost Management query ($GroupDimension) still failing (429)."; exit 1 }
 
-    return @{ Raw = $rawJson; Result = ($rawJson | ConvertFrom-Json) }
+    try {
+        $parsed = $rawJson | ConvertFrom-Json
+    } catch {
+        Write-TaskLog "ERROR" "Cost Management response parse failed ($GroupDimension): $rawJson"
+        exit 1
+    }
+
+    return @{ Raw = $rawJson; Result = $parsed }
 }
 
 # --- Query #1: by ServiceName (existing axis -> by_service) -------------------
@@ -141,7 +190,7 @@ $rows = @($result.properties.rows)
 $iCost = [array]::IndexOf($cols, "PreTaxCost")
 $iSvc  = [array]::IndexOf($cols, "ServiceName")
 $iCur  = [array]::IndexOf($cols, "Currency")
-if ($iCost -lt 0) { Write-GiipLog "ERROR" "Unexpected response shape (no PreTaxCost column)."; exit 1 }
+if ($iCost -lt 0) { Write-TaskLog "ERROR" "Unexpected response shape (no PreTaxCost column)."; exit 1 }
 
 # --- Save raw JSON (UTF-8, no BOM) — service-axis dump is the canonical raw ----
 if (-not $OutFile) {
@@ -150,7 +199,7 @@ if (-not $OutFile) {
     $OutFile = Join-Path $azDir ("azure_cost_{0}_{1}.json" -f $subId, $today.ToString("yyyyMMdd"))
 }
 [System.IO.File]::WriteAllText($OutFile, $rawJson, $utf8NoBom)
-Write-GiipLog "INFO" "Saved raw cost JSON ($($rows.Count) service rows) -> $OutFile"
+Write-TaskLog "INFO" "Saved raw cost JSON ($($rows.Count) service rows) -> $OutFile"
 
 # --- Query #2: by ResourceGroupName (new axis -> by_resource_group) -----------
 # Feeds giipv3 azure-cost-rg/page.tsx (by_resource_group[{resource_group,cost}] + resource_group_count).
@@ -173,9 +222,9 @@ if ($iRgCost -ge 0) {
     }
     $byResourceGroup = @($rgList | Sort-Object cost -Descending)
 } else {
-    Write-GiipLog "WARN" "ResourceGroupName query returned no PreTaxCost column; by_resource_group left empty."
+    Write-TaskLog "WARN" "ResourceGroupName query returned no PreTaxCost column; by_resource_group left empty."
 }
-Write-GiipLog "INFO" "Collected $($byResourceGroup.Count) resource-group rows."
+Write-TaskLog "INFO" "Collected $($byResourceGroup.Count) resource-group rows."
 
 # --- Summarize (this becomes kValue) -----------------------------------------
 $services = foreach ($row in $rows) {
@@ -203,13 +252,19 @@ $summary = [PSCustomObject]@{
 }
 
 # --- Push to GIIP KVS --------------------------------------------------------
-Write-GiipLog "INFO" "Pushing azure_cost to KVS (lssn=$($Config.lssn), total=$($summary.total_pretax_cost) $currency)."
+Write-TaskLog "INFO" "Pushing azure_cost to KVS (lssn=$($Config.lssn), total=$($summary.total_pretax_cost) $currency)."
 $resp = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor $Factor -Value $summary
 
-if ($resp -and $resp.RstVal -eq "200") {
-    Write-GiipLog "INFO" "Azure cost uploaded successfully."
+if ($resp -and ($resp.RstVal -eq "200" -or $resp.RstVal -eq 200)) {
+    Write-TaskLog "INFO" "Azure cost uploaded successfully."
+    exit 0
 } else {
     $rv = if ($resp) { $resp.RstVal } else { "no-response" }
-    Write-GiipLog "ERROR" "KVS put failed (RstVal=$rv)."
+    Write-TaskLog "ERROR" "KVS put failed (RstVal=$rv)."
+    exit 1
+}
+
+} catch {
+    Write-TaskLog "ERROR" "Unhandled failure: $($_.Exception.Message)"
     exit 1
 }
