@@ -542,9 +542,12 @@ function Send-GiipApi {
   if ($UserToken) { $ut = $UserToken }
   $uid = ''
   if ($UserId) { $uid = $UserId }
+  # Standard KVSPut: text = parameter NAMES only; jsondata carries the real values
+  # including kValue. The legacy "KVSPut <kType>, <kKey>, <kFactor>" inline form
+  # stores kType/kKey/kFactor/kValue as EMPTY on the server (silent data loss).
   $body = @{
-    text      = "KVSPut $KType, $KKey, $KFactor";
-    jsondata  = $JsonValue;
+    text      = "KVSPut kType kKey kFactor kValue";
+    jsondata  = (@{ kType = $KType; kKey = $KKey; kFactor = $KFactor; kValue = ($JsonValue | ConvertFrom-Json) } | ConvertTo-Json -Compress -Depth 20);
     usertoken = $ut;
     user_id   = $uid;
     token     = $ut

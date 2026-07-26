@@ -25,7 +25,7 @@ $checklist = @{
 try {
     $diagData = @{status = "alive" } | ConvertTo-Json -Compress
     $payloadData = @{kType = "lssn"; kKey = "$lssn"; kFactor = "diag_heartbeat"; kValue = $diagData } | ConvertTo-Json -Compress
-    Invoke-GiipApiV2 -Config $config -CommandText "KVSPut kType kKey kFactor" -JsonData $payloadData -ErrorAction Stop | Out-Null
+    Invoke-GiipApiV2 -Config $config -CommandText "KVSPut kType kKey kFactor kValue" -JsonData $payloadData -ErrorAction Stop | Out-Null
 }
 catch {
     $checklist.features.heartbeat = "FAIL"
@@ -47,7 +47,7 @@ $jsonBody = $checklist | ConvertTo-Json -Compress
 
 # Report to KVS
 $reportData = @{kType = "lssn"; kKey = "$lssn"; kFactor = "agent_health_checklist"; kValue = $jsonBody } | ConvertTo-Json -Compress
-Invoke-GiipApiV2 -Config $config -CommandText "KVSPut kType kKey kFactor" -JsonData $reportData
+Invoke-GiipApiV2 -Config $config -CommandText "KVSPut kType kKey kFactor kValue" -JsonData $reportData
 
 Write-Host " Self-diagnostic completed with status: $($checklist.status)"
 
