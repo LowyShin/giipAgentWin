@@ -3,8 +3,10 @@
 # Purpose: Windowless replacement for giipAgent3.bat.
 #          Runs git-auto-sync.ps1 (pull latest) then giipAgent3.ps1, all inside
 #          the SAME PowerShell process so no cmd.exe/console window is ever
-#          spawned. Intended as the Task Scheduler action target:
-#            powershell.exe -WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File "...\giipAgent3-launcher.ps1"
+#          spawned. Invoked via giipAgent3-silent.vbs (wscript.exe), which is
+#          the actual Task Scheduler action target - see TaskSchdReg.ps1.
+#          ("powershell.exe -WindowStyle Hidden" alone can still briefly
+#          flash a console window on some Windows builds/logon types.)
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
