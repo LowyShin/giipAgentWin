@@ -12,17 +12,22 @@
 #   {{CustomVariables}} -> per-assignment custom_values injected as PS code
 #                          (giipdb pCQEForcebyUsn REPLACE). Must set:
 #                            $GaProperty  = 'properties/123456789'
-#                            $GaKeyFile   = 'C:\giip\ga-service-account.json'
 #                            $GaDispatcher= 'https://<giip byAK dispatcher url>'
-#                          optional: $GaFactor (default 'daily'), $GaRange (default 'yesterday')
+#                          optional: $GaKeyFile (local override path, skips DB fetch),
+#                                    $GaFactor (default 'daily'), $GaRange (default 'yesterday')
+#
+# giip-803: GA4 서비스계정 키는 서버에 파일로 미리 배치하지 않는다 — ga-property 화면에서
+#   입력/관리되는 값을 실행 시점에 pApiGaKeyGetbySk(자기 sk 인증)로 받아 임시파일로만 쓰고
+#   즉시 삭제한다(giipAgentLinux/cqe/ga-collect.cqe.sh 와 동일 방식으로 통일).
+#   $GaKeyFile 을 custom_values 로 명시 주입한 경우에만 로컬 파일을 우선한다.
 #
 # Remote PC prerequisites:
 #   - PowerShell 7 (pwsh) installed  (RSA PKCS#8 JWT signing). Body re-execs under pwsh.
-#   - GA4 service-account key JSON present at $GaKeyFile (NOT shipped in ms_body).
 #   - giipAgentWin running and polling CQE for this lssn.
 #
 # Registration: giipdb/mgmt/register-ga-cqe.ps1 (CQERepoPut + CQEQueuePut).
 # Spec: giip-678 / SPEC_20260720_GA_KVS_AI_REPORT.md T3 (CQE delivery variant)
+# giip-803: DB 기반 키 조회로 giipAgentLinux 와 동작을 통일.
 # ============================================================================
 
 $ErrorActionPreference = "Stop"
@@ -57,8 +62,35 @@ if ($PSVersionTable.PSVersion.Major -lt 6) {
 # --- Validate injected config ------------------------------------------------
 if (-not $GaProperty)   { GaLog "ERROR" "GaProperty not set (custom_values)."; exit 1 }
 if (-not $GaDispatcher) { GaLog "ERROR" "GaDispatcher not set (custom_values)."; exit 1 }
-if (-not $GaKeyFile -or -not (Test-Path $GaKeyFile)) { GaLog "ERROR" "GaKeyFile not found: '$GaKeyFile'."; exit 1 }
 if (-not $GiipToken -or $GiipToken -like '*{{*') { GaLog "ERROR" "GIIP token not injected."; exit 1 }
+
+# --- GA4 서비스계정 키 확보: 로컬 override 없으면 DB(ga-property 화면)에서 조회 ---
+$FetchedKeyFile = $null
+if (-not $GaKeyFile -or -not (Test-Path $GaKeyFile)) {
+    $keyPayload = @{ gaPropertyId = $GaProperty } | ConvertTo-Json -Compress
+    $keyForm = "text=" + [uri]::EscapeDataString("GaKeyGet gaPropertyId") +
+               "&token=" + [uri]::EscapeDataString($GiipToken) +
+               "&jsondata=" + [uri]::EscapeDataString($keyPayload)
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $keyResp = Invoke-RestMethod -Method Post -Uri $GaDispatcher -ContentType 'application/x-www-form-urlencoded; charset=utf-8' -Body $keyForm -TimeoutSec 30
+
+    $keyB64 = $null
+    if ($keyResp) {
+        $keyB64 = $keyResp.gaKeyJsonB64
+        if (-not $keyB64 -and $keyResp.data) { $keyB64 = $keyResp.data[0].gaKeyJsonB64 }
+    }
+    if (-not $keyB64) {
+        $pm = $null
+        if ($keyResp) { $pm = $keyResp.Proc_MSG; if (-not $pm -and $keyResp.data) { $pm = $keyResp.data[0].Proc_MSG } }
+        if (-not $pm) { $pm = $keyResp | ConvertTo-Json -Compress -Depth 5 }
+        GaLog "ERROR" ("GaKeyGet failed (property not registered with a key on ga-property page?): " + $pm)
+        exit 1
+    }
+
+    $FetchedKeyFile = New-TemporaryFile
+    [IO.File]::WriteAllBytes($FetchedKeyFile.FullName, [Convert]::FromBase64String($keyB64))
+    $GaKeyFile = $FetchedKeyFile.FullName
+}
 
 function ConvertTo-Base64Url([byte[]]$Bytes) {
     return [Convert]::ToBase64String($Bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
@@ -131,4 +163,7 @@ try {
 catch {
     GaLog "ERROR" "GA CQE collect failed: $_"
     exit 1
+}
+finally {
+    if ($FetchedKeyFile -and (Test-Path $FetchedKeyFile.FullName)) { Remove-Item $FetchedKeyFile.FullName -Force -ErrorAction SilentlyContinue }
 }
