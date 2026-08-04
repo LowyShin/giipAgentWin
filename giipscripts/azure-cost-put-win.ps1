@@ -122,11 +122,18 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 # Cost Management's `grouping` array accepts up to 2 entries per query (Query -
 # Usage REST API spec), so a two-dimension request (e.g. ResourceGroupName +
 # ServiceName) returns both columns in the same row set instead of two calls.
-# Cost Management enforces strict 429 rate limits -> retry up to 5x, 35s backoff.
+# Cost Management enforces strict 429 rate limits -> retry up to 5x, growing backoff.
 # az rest --body @file avoids shell-quoting issues (BOM-less UTF-8 temp file).
-# Returns @{ Raw = <json string>; Result = <parsed object> }, or hard-exits(1).
+# Returns @{ Raw = <json string>; Result = <parsed object> } on success.
+# On failure: -Required hard-exits(1) (used for the ServiceName axis the whole run
+# depends on); otherwise returns $null so the caller can degrade gracefully instead
+# of losing axes that already succeeded (giip #873 — a 429 on query #2/#3 used to
+# exit 1 and drop the already-collected/saved service-axis data along with it).
 function Invoke-CmQuery {
-    param([Parameter(Mandatory)][string[]]$GroupDimensions)
+    param(
+        [Parameter(Mandatory)][string[]]$GroupDimensions,
+        [switch]$Required
+    )
 
     $label = $GroupDimensions -join "+"
     $dataset = @{
@@ -174,23 +181,30 @@ function Invoke-CmQuery {
         }
         Write-TaskLog "ERROR" "Cost Management query ($label) failed: $rawJson"
         Remove-Item $tmpBody -ErrorAction SilentlyContinue
-        exit 1
+        if ($Required) { exit 1 }
+        return $null
     }
     Remove-Item $tmpBody -ErrorAction SilentlyContinue
-    if (-not $rawJson -or $rawJson -match '429|Too Many Requests') { Write-TaskLog "ERROR" "Cost Management query ($label) still failing (429)."; exit 1 }
+    if (-not $rawJson -or $rawJson -match '429|Too Many Requests') {
+        Write-TaskLog "ERROR" "Cost Management query ($label) still failing (429) after 5 retries."
+        if ($Required) { exit 1 }
+        return $null
+    }
 
     try {
         $parsed = $rawJson | ConvertFrom-Json
     } catch {
         Write-TaskLog "ERROR" "Cost Management response parse failed ($label): $rawJson"
-        exit 1
+        if ($Required) { exit 1 }
+        return $null
     }
 
     return @{ Raw = $rawJson; Result = $parsed }
 }
 
 # --- Query #1: by ServiceName (existing axis -> by_service) -------------------
-$svcQ   = Invoke-CmQuery -GroupDimensions @("ServiceName")
+# Required: the raw dump, total cost and by_service breakdown all derive from this.
+$svcQ   = Invoke-CmQuery -GroupDimensions @("ServiceName") -Required
 $rawJson = $svcQ.Raw
 $result  = $svcQ.Result
 $cols = @($result.properties.columns.name)
@@ -212,26 +226,34 @@ Write-TaskLog "INFO" "Saved raw cost JSON ($($rows.Count) service rows) -> $OutF
 
 # --- Query #2: by ResourceGroupName (new axis -> by_resource_group) -----------
 # Feeds giipv3 azure-cost-rg/page.tsx (by_resource_group[{resource_group,cost}] + resource_group_count).
-$rgQ      = Invoke-CmQuery -GroupDimensions @("ResourceGroupName")
-$rgResult = $rgQ.Result
-$rgCols   = @($rgResult.properties.columns.name)
-$rgRows   = @($rgResult.properties.rows)
-$iRgCost  = [array]::IndexOf($rgCols, "PreTaxCost")
-$iRg      = [array]::IndexOf($rgCols, "ResourceGroupName")
-if ($iRg -lt 0) { $iRg = [array]::IndexOf($rgCols, "ResourceGroup") }  # API shape fallback
+# Optional (giip #873): if this axis keeps failing (429 exhausted), degrade to an
+# empty axis and still push the service-axis data already collected above, instead
+# of exit 1'ing and losing everything for the day.
+$rgQ = Invoke-CmQuery -GroupDimensions @("ResourceGroupName")
 
 $byResourceGroup = @()
-if ($iRgCost -ge 0) {
-    $rgList = foreach ($row in $rgRows) {
-        $rgName = if ($iRg -ge 0 -and $row[$iRg]) { [string]$row[$iRg] } else { "" }
-        [PSCustomObject]@{
-            resource_group = if ($rgName) { $rgName } else { "(unassigned)" }  # costs with no RG
-            cost           = [math]::Round([double]$row[$iRgCost], 4)
+if ($rgQ) {
+    $rgResult = $rgQ.Result
+    $rgCols   = @($rgResult.properties.columns.name)
+    $rgRows   = @($rgResult.properties.rows)
+    $iRgCost  = [array]::IndexOf($rgCols, "PreTaxCost")
+    $iRg      = [array]::IndexOf($rgCols, "ResourceGroupName")
+    if ($iRg -lt 0) { $iRg = [array]::IndexOf($rgCols, "ResourceGroup") }  # API shape fallback
+
+    if ($iRgCost -ge 0) {
+        $rgList = foreach ($row in $rgRows) {
+            $rgName = if ($iRg -ge 0 -and $row[$iRg]) { [string]$row[$iRg] } else { "" }
+            [PSCustomObject]@{
+                resource_group = if ($rgName) { $rgName } else { "(unassigned)" }  # costs with no RG
+                cost           = [math]::Round([double]$row[$iRgCost], 4)
+            }
         }
+        $byResourceGroup = @($rgList | Sort-Object cost -Descending)
+    } else {
+        Write-TaskLog "WARN" "ResourceGroupName query returned no PreTaxCost column; by_resource_group left empty."
     }
-    $byResourceGroup = @($rgList | Sort-Object cost -Descending)
 } else {
-    Write-TaskLog "WARN" "ResourceGroupName query returned no PreTaxCost column; by_resource_group left empty."
+    Write-TaskLog "WARN" "ResourceGroupName query failed after retries; by_resource_group left empty for this run (service-axis data still pushed)."
 }
 Write-TaskLog "INFO" "Collected $($byResourceGroup.Count) resource-group rows."
 
@@ -241,43 +263,49 @@ Write-TaskLog "INFO" "Collected $($byResourceGroup.Count) resource-group rows."
 # with a 2-entry grouping array returns both dimensions per row (Query - Usage
 # REST API: grouping accepts up to 2 dimensions), so no extra per-RG calls or
 # 429 risk are introduced versus the by_resource_group axis above.
-$rgSvcQ      = Invoke-CmQuery -GroupDimensions @("ResourceGroupName", "ServiceName")
-$rgSvcResult = $rgSvcQ.Result
-$rgSvcCols   = @($rgSvcResult.properties.columns.name)
-$rgSvcRows   = @($rgSvcResult.properties.rows)
-$iRgSvcCost  = [array]::IndexOf($rgSvcCols, "PreTaxCost")
-$iRgSvcRg    = [array]::IndexOf($rgSvcCols, "ResourceGroupName")
-if ($iRgSvcRg -lt 0) { $iRgSvcRg = [array]::IndexOf($rgSvcCols, "ResourceGroup") }  # API shape fallback
-$iRgSvcSvc   = [array]::IndexOf($rgSvcCols, "ServiceName")
+# Optional (giip #873): same graceful-degradation treatment as query #2.
+$rgSvcQ = Invoke-CmQuery -GroupDimensions @("ResourceGroupName", "ServiceName")
 
 $byResourceGroupService = @()
-if ($iRgSvcCost -ge 0) {
-    $rgSvcFlat = foreach ($row in $rgSvcRows) {
-        $rgName  = if ($iRgSvcRg -ge 0 -and $row[$iRgSvcRg]) { [string]$row[$iRgSvcRg] } else { "" }
-        $svcName = if ($iRgSvcSvc -ge 0 -and $row[$iRgSvcSvc]) { [string]$row[$iRgSvcSvc] } else { "All" }
-        [PSCustomObject]@{
-            resource_group = if ($rgName) { $rgName } else { "(unassigned)" }
-            service        = $svcName
-            cost           = [math]::Round([double]$row[$iRgSvcCost], 4)
-        }
-    }
-    $rgGroups = @($rgSvcFlat | Group-Object resource_group)
+if ($rgSvcQ) {
+    $rgSvcResult = $rgSvcQ.Result
+    $rgSvcCols   = @($rgSvcResult.properties.columns.name)
+    $rgSvcRows   = @($rgSvcResult.properties.rows)
+    $iRgSvcCost  = [array]::IndexOf($rgSvcCols, "PreTaxCost")
+    $iRgSvcRg    = [array]::IndexOf($rgSvcCols, "ResourceGroupName")
+    if ($iRgSvcRg -lt 0) { $iRgSvcRg = [array]::IndexOf($rgSvcCols, "ResourceGroup") }  # API shape fallback
+    $iRgSvcSvc   = [array]::IndexOf($rgSvcCols, "ServiceName")
 
-    $rgSvcSummaries = foreach ($grp in $rgGroups) {
-        $svcRows = @($grp.Group | Sort-Object cost -Descending)
-        $rgTotal = [math]::Round((($svcRows | Measure-Object cost -Sum).Sum), 4)
-        [PSCustomObject]@{
-            resource_group = $grp.Name
-            cost           = $rgTotal
-            service_count  = $svcRows.Count
-            services       = @($svcRows | Select-Object service, cost)
+    if ($iRgSvcCost -ge 0) {
+        $rgSvcFlat = foreach ($row in $rgSvcRows) {
+            $rgName  = if ($iRgSvcRg -ge 0 -and $row[$iRgSvcRg]) { [string]$row[$iRgSvcRg] } else { "" }
+            $svcName = if ($iRgSvcSvc -ge 0 -and $row[$iRgSvcSvc]) { [string]$row[$iRgSvcSvc] } else { "All" }
+            [PSCustomObject]@{
+                resource_group = if ($rgName) { $rgName } else { "(unassigned)" }
+                service        = $svcName
+                cost           = [math]::Round([double]$row[$iRgSvcCost], 4)
+            }
         }
+        $rgGroups = @($rgSvcFlat | Group-Object resource_group)
+
+        $rgSvcSummaries = foreach ($grp in $rgGroups) {
+            $svcRows = @($grp.Group | Sort-Object cost -Descending)
+            $rgTotal = [math]::Round((($svcRows | Measure-Object cost -Sum).Sum), 4)
+            [PSCustomObject]@{
+                resource_group = $grp.Name
+                cost           = $rgTotal
+                service_count  = $svcRows.Count
+                services       = @($svcRows | Select-Object service, cost)
+            }
+        }
+        $byResourceGroupService = @($rgSvcSummaries | Sort-Object cost -Descending)
+    } else {
+        Write-TaskLog "WARN" "ResourceGroupName+ServiceName query returned no PreTaxCost column; by_resource_group_service left empty."
     }
-    $byResourceGroupService = @($rgSvcSummaries | Sort-Object cost -Descending)
 } else {
-    Write-GiipLog "WARN" "ResourceGroupName+ServiceName query returned no PreTaxCost column; by_resource_group_service left empty."
+    Write-TaskLog "WARN" "ResourceGroupName+ServiceName query failed after retries; by_resource_group_service left empty for this run (service-axis data still pushed)."
 }
-Write-GiipLog "INFO" "Collected $($byResourceGroupService.Count) resource-group x service groups."
+Write-TaskLog "INFO" "Collected $($byResourceGroupService.Count) resource-group x service groups."
 
 # --- Summarize (this becomes kValue) -----------------------------------------
 $services = foreach ($row in $rows) {
