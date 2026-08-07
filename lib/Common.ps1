@@ -85,7 +85,14 @@ function Invoke-GiipApiV2 {
     param(
         [Parameter(Mandatory)][hashtable]$Config,
         [Parameter(Mandatory)][string]$CommandText,
-        [Parameter(Mandatory)][string]$JsonData
+        [Parameter(Mandatory)][string]$JsonData,
+        # giip-issue #922: most callers want a single object and rely on the
+        # $response.data[0] unwrap below. List endpoints (e.g.
+        # "ManagedDatabaseListForAgent") return multiple rows in $response.data
+        # and were silently truncated to just the first one. Pass -RawList to
+        # get the full, un-unwrapped $response back instead (existing callers
+        # are unaffected -- default behavior is unchanged).
+        [switch]$RawList
     )
     $effectiveToken = if ($Global:GiipSessionAK) { $Global:GiipSessionAK } else { $Config.sk }
     
@@ -135,6 +142,7 @@ function Invoke-GiipApiV2 {
             Write-GiipLog "DEBUG" "API Non-Success Response ($($response.RstVal)): $rawJson"
         }
         
+        if ($RawList) { return $response }
         if ($response.data -and $response.data.Count -gt 0) { return $response.data[0] }
         return $response
     } catch {
