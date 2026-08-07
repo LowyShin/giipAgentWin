@@ -90,18 +90,20 @@ function Get-MssqlPerfDiag {
     $regressQuery = @"
 SET NOCOUNT ON;
 ;WITH recent AS (
-    SELECT rs.query_id, AVG(rs.avg_duration) AS avg_dur_recent, SUM(rs.count_executions) AS exec_recent
+    SELECT p.query_id, AVG(rs.avg_duration) AS avg_dur_recent, SUM(rs.count_executions) AS exec_recent
     FROM sys.query_store_runtime_stats rs
+    JOIN sys.query_store_plan p ON rs.plan_id = p.plan_id
     JOIN sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
     WHERE rsi.start_time >= DATEADD(MINUTE, -30, GETUTCDATE())
-    GROUP BY rs.query_id
+    GROUP BY p.query_id
 ),
 baseline AS (
-    SELECT rs.query_id, AVG(rs.avg_duration) AS avg_dur_baseline
+    SELECT p.query_id, AVG(rs.avg_duration) AS avg_dur_baseline
     FROM sys.query_store_runtime_stats rs
+    JOIN sys.query_store_plan p ON rs.plan_id = p.plan_id
     JOIN sys.query_store_runtime_stats_interval rsi ON rs.runtime_stats_interval_id = rsi.runtime_stats_interval_id
     WHERE rsi.start_time >= DATEADD(HOUR, -25, GETUTCDATE()) AND rsi.start_time < DATEADD(MINUTE, -30, GETUTCDATE())
-    GROUP BY rs.query_id
+    GROUP BY p.query_id
 )
 SELECT TOP 5
     r.query_id,

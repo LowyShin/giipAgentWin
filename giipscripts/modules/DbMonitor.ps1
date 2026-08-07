@@ -56,6 +56,37 @@ $statsList = @()
 foreach ($db in $dbList) {
     try {
         Write-GiipLog "DEBUG" "[DbMonitor] DB Object: $($db | ConvertTo-Json -Compress)"
+
+        # giip-issue #922 follow-up (root cause for #921's db_perf_diag never appearing):
+        # giipscripts/dpa-put-mssql-perfdiag.ps1 (PR #26) was added as a standalone
+        # script but nothing ever invoked it -- no scheduled task, no caller anywhere
+        # in this repo. This loop already has the exact per-DB list (host/port/user/
+        # password/database) the script needs, so this is that missing trigger.
+        # Read-only diagnostics only (Query Store SELECTs + Azure Monitor reads);
+        # never modifies the target DB. Failures are logged and swallowed so a perf
+        # diagnostics error never blocks the existing MdbStatsUpdate flow below.
+        if ($db.db_type -and ($db.db_type -match '^(mssql|azuresql)$')) {
+            try {
+                $diagScript = Join-Path $ScriptDir "..\dpa-put-mssql-perfdiag.ps1"
+                if (Test-Path $diagScript) {
+                    $diagHost = if ($db.db_host) { $db.db_host } else { $db.ip }
+                    $diagPort = if ($db.db_port) { $db.db_port } else { "1433" }
+                    $diagDb = if ($db.db_database) { $db.db_database } elseif ($db.db_name) { $db.db_name } else { $null }
+                    $diagUser = if ($db.db_user) { $db.db_user } else { $db.user }
+                    $diagPass = if ($db.db_password) { $db.db_password } else { $db.pass }
+                    if ($diagHost -and $diagDb -and $diagUser) {
+                        $connStr = "Server=$diagHost,$diagPort;Initial Catalog=$diagDb;User ID=$diagUser;Password=$diagPass;TrustServerCertificate=True;Connect Timeout=15;"
+                        Write-GiipLog "INFO" "[DbMonitor] Running MSSQL perf diagnostics (giip-921/922) for mdb_id=$($db.mdb_id)..."
+                        & $diagScript -SqlConnectionString $connStr -MdbId ([int]$db.mdb_id)
+                    } else {
+                        Write-GiipLog "WARN" "[DbMonitor] Skipping perf diagnostics for mdb_id=$($db.mdb_id): missing host/database/user."
+                    }
+                }
+            } catch {
+                Write-GiipLog "WARN" "[DbMonitor] Perf diagnostics collection failed for mdb_id=$($db.mdb_id): $_"
+            }
+        }
+
         $stat = Get-GiipDbMetrics -DbInfo $db -LibDir $LibDir -Config $Config
         if ($stat) {
             # Create a clean, strictly-typed payload for the API
