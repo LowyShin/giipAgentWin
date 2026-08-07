@@ -34,8 +34,13 @@ Write-GiipLog "INFO" "[DbMonitor] Starting DB Monitoring..."
 try {
     $reqData = @{ lssn = $Config.lssn }
     $reqJson = $reqData | ConvertTo-Json -Compress
-    $response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson
-    
+    # -RawList: this is a list endpoint (can return >1 managed database per lssn).
+    # Without it, Invoke-GiipApiV2's default single-object unwrap silently
+    # truncates the result to just the FIRST database returned (giip-issue #922
+    # follow-up -- found live: a customer with 2 managed databases on the same
+    # gateway only ever had the first one monitored).
+    $response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson -RawList
+
     $dbList = $null
     if ($response.data) { $dbList = $response.data }
     elseif ($response -is [Array]) { $dbList = $response }
