@@ -224,8 +224,36 @@ if (-not $OutFile) {
 [System.IO.File]::WriteAllText($OutFile, $rawJson, $utf8NoBom)
 Write-TaskLog "INFO" "Saved raw cost JSON ($($rows.Count) service rows) -> $OutFile"
 
+# --- Carry-forward helper (giip #1028) -----------------------------------------
+# giip #873 stopped a 429 on the RG axes from exit 1'ing and losing the whole run's
+# data. But it still pushes an EMPTY by_resource_group/by_resource_group_service to
+# the SAME KVS coordinate the azure-cost page reads (KVSFactorLast = latest record
+# only) -- so a persistent 429 day silently blanks the "리소스 그룹별" tab even though
+# yesterday's RG breakdown is still perfectly valid (real incident: lssn 71197,
+# 2026-08-11 06:00 run, 10 retries/~11min across both RG queries, all 429).
+# Fix: when an RG-axis query is exhausted, fetch the last-known-good KVS record and
+# carry its RG-axis arrays forward (tagged with *_stale_since = the ORIGINAL
+# collection time of that data, not today) instead of overwriting good data with [].
+$prevKvsValue = $null
+$prevKvsFetchAttempted = $false
+function Get-PreviousAzureCostValue {
+    if ($script:prevKvsFetchAttempted) { return $script:prevKvsValue }
+    $script:prevKvsFetchAttempted = $true
+    try {
+        $jsonData = (@{ kType = "lssn"; kKey = "$($Config.lssn)"; kFactor = $Factor } | ConvertTo-Json -Compress)
+        $resp = Invoke-GiipApiV2 -Config $Config -CommandText "KVSFactorLast kType kKey kFactor" -JsonData $jsonData -RawList
+        $rec = if ($resp -and $resp.data -and @($resp.data).Count -gt 0) { @($resp.data)[0] } else { $null }
+        if (-not $rec -or -not $rec.kValue) { $script:prevKvsValue = $null; return $null }
+        $script:prevKvsValue = ($rec.kValue | ConvertFrom-Json)
+    } catch {
+        Write-TaskLog "WARN" "Fetching previous KVS record for RG carry-forward failed: $($_.Exception.Message)"
+        $script:prevKvsValue = $null
+    }
+    return $script:prevKvsValue
+}
+
 # --- Query #2: by ResourceGroupName (new axis -> by_resource_group) -----------
-# Feeds giipv3 azure-cost-rg/page.tsx (by_resource_group[{resource_group,cost}] + resource_group_count).
+# Feeds giipv3 azure-cost page (by_resource_group[{resource_group,cost}] + resource_group_count).
 # Optional (giip #873): if this axis keeps failing (429 exhausted), degrade to an
 # empty axis and still push the service-axis data already collected above, instead
 # of exit 1'ing and losing everything for the day.
@@ -253,7 +281,16 @@ if ($rgQ) {
         Write-TaskLog "WARN" "ResourceGroupName query returned no PreTaxCost column; by_resource_group left empty."
     }
 } else {
-    Write-TaskLog "WARN" "ResourceGroupName query failed after retries; by_resource_group left empty for this run (service-axis data still pushed)."
+    Write-TaskLog "WARN" "ResourceGroupName query failed after retries; attempting carry-forward from last KVS record (service-axis data still pushed)."
+    $prevForRg = Get-PreviousAzureCostValue
+    $prevRgList = @($prevForRg.by_resource_group)
+    if ($prevForRg -and $prevRgList.Count -gt 0) {
+        $byResourceGroup = $prevRgList
+        $rgStaleSince = if ($prevForRg.by_resource_group_stale_since) { $prevForRg.by_resource_group_stale_since } else { $prevForRg.collected_at }
+        Write-TaskLog "WARN" "Carried forward $($byResourceGroup.Count) resource-group rows from $rgStaleSince (429 exhausted for today's run)."
+    } else {
+        Write-TaskLog "WARN" "No previous by_resource_group available to carry forward; by_resource_group left empty for this run."
+    }
 }
 Write-TaskLog "INFO" "Collected $($byResourceGroup.Count) resource-group rows."
 
@@ -303,7 +340,16 @@ if ($rgSvcQ) {
         Write-TaskLog "WARN" "ResourceGroupName+ServiceName query returned no PreTaxCost column; by_resource_group_service left empty."
     }
 } else {
-    Write-TaskLog "WARN" "ResourceGroupName+ServiceName query failed after retries; by_resource_group_service left empty for this run (service-axis data still pushed)."
+    Write-TaskLog "WARN" "ResourceGroupName+ServiceName query failed after retries; attempting carry-forward from last KVS record (service-axis data still pushed)."
+    $prevForRgSvc = Get-PreviousAzureCostValue
+    $prevRgSvcList = @($prevForRgSvc.by_resource_group_service)
+    if ($prevForRgSvc -and $prevRgSvcList.Count -gt 0) {
+        $byResourceGroupService = $prevRgSvcList
+        $rgSvcStaleSince = if ($prevForRgSvc.by_resource_group_service_stale_since) { $prevForRgSvc.by_resource_group_service_stale_since } else { $prevForRgSvc.collected_at }
+        Write-TaskLog "WARN" "Carried forward $($byResourceGroupService.Count) resource-group x service groups from $rgSvcStaleSince (429 exhausted for today's run)."
+    } else {
+        Write-TaskLog "WARN" "No previous by_resource_group_service available to carry forward; by_resource_group_service left empty for this run."
+    }
 }
 Write-TaskLog "INFO" "Collected $($byResourceGroupService.Count) resource-group x service groups."
 
@@ -332,6 +378,11 @@ $summary = [PSCustomObject]@{
     by_resource_group_service = $byResourceGroupService
     collected_at         = $today.ToString("s")
 }
+# giip #1028: mark RG-axis fields as carried-forward from an earlier run (429
+# exhausted today) so the KVS record is honest about *when* that data is from,
+# instead of silently implying it was collected at $today like everything else.
+if ($rgStaleSince) { $summary | Add-Member -NotePropertyName "by_resource_group_stale_since" -NotePropertyValue $rgStaleSince }
+if ($rgSvcStaleSince) { $summary | Add-Member -NotePropertyName "by_resource_group_service_stale_since" -NotePropertyValue $rgSvcStaleSince }
 
 # --- Push to GIIP KVS --------------------------------------------------------
 Write-TaskLog "INFO" "Pushing azure_cost to KVS (lssn=$($Config.lssn), total=$($summary.total_pretax_cost) $currency)."
