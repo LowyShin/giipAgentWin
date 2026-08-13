@@ -289,6 +289,12 @@ if ($rgQ) {
         $rgStaleSince = if ($prevForRg.by_resource_group_stale_since) { $prevForRg.by_resource_group_stale_since } else { $prevForRg.collected_at }
         Write-TaskLog "WARN" "Carried forward $($byResourceGroup.Count) resource-group rows from $rgStaleSince (429 exhausted for today's run)."
     } else {
+        # giip #1067: no prior KVS record to carry forward (new csn/subscription, or first
+        # collection ever exhausted 429) -- by_resource_group is genuinely empty *because the
+        # query failed*, not because the subscription has zero RG cost. Flag it so the page
+        # can tell "수집 실패" apart from "정상적으로 0건"(real incident: lssn 71197, 2026-08-13
+        # 06:06:50, this exact branch hit in production).
+        $rgCollectionFailed = $true
         Write-TaskLog "WARN" "No previous by_resource_group available to carry forward; by_resource_group left empty for this run."
     }
 }
@@ -348,6 +354,8 @@ if ($rgSvcQ) {
         $rgSvcStaleSince = if ($prevForRgSvc.by_resource_group_service_stale_since) { $prevForRgSvc.by_resource_group_service_stale_since } else { $prevForRgSvc.collected_at }
         Write-TaskLog "WARN" "Carried forward $($byResourceGroupService.Count) resource-group x service groups from $rgSvcStaleSince (429 exhausted for today's run)."
     } else {
+        # giip #1067: same "no prior value to carry forward" case as the RG axis above.
+        $rgSvcCollectionFailed = $true
         Write-TaskLog "WARN" "No previous by_resource_group_service available to carry forward; by_resource_group_service left empty for this run."
     }
 }
@@ -383,6 +391,10 @@ $summary = [PSCustomObject]@{
 # instead of silently implying it was collected at $today like everything else.
 if ($rgStaleSince) { $summary | Add-Member -NotePropertyName "by_resource_group_stale_since" -NotePropertyValue $rgStaleSince }
 if ($rgSvcStaleSince) { $summary | Add-Member -NotePropertyName "by_resource_group_service_stale_since" -NotePropertyValue $rgSvcStaleSince }
+# giip #1067: 429 exhausted AND no previous KVS value existed to carry forward -- the axis
+# is empty because collection failed, not because there is genuinely nothing to report.
+if ($rgCollectionFailed) { $summary | Add-Member -NotePropertyName "by_resource_group_collection_failed" -NotePropertyValue $true }
+if ($rgSvcCollectionFailed) { $summary | Add-Member -NotePropertyName "by_resource_group_service_collection_failed" -NotePropertyValue $true }
 
 # --- Push to GIIP KVS --------------------------------------------------------
 Write-TaskLog "INFO" "Pushing azure_cost to KVS (lssn=$($Config.lssn), total=$($summary.total_pretax_cost) $currency)."
