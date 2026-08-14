@@ -35,12 +35,9 @@ Write-Host "--- [Step 3] Checking DB List from API ---"
 try {
     $reqData = @{ lssn = $Config.lssn }
     $reqJson = $reqData | ConvertTo-Json -Compress
-    $response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson
+    $response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson -RawList
 
-    $dbList = $null
-    if ($response.data) { $dbList = $response.data }
-    elseif ($response -is [Array]) { $dbList = $response }
-    elseif ($response.mdb_id) { $dbList = @($response) }
+    $dbList = if ($response.data) { $response.data } else { @() }
 
     if ($dbList) {
         Write-Host "Found $($dbList.Count) databases."
