@@ -36,12 +36,9 @@ try {
     $reqJson = $reqData | ConvertTo-Json -Compress
     
     # Use unified SP 'pApiManagedDatabaseListForAgentbySk'
-    $response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson
-    
-    $dbList = $null
-    if ($response.data) { $dbList = $response.data }
-    elseif ($response -is [Array]) { $dbList = $response }
-    elseif ($response.mdb_id) { $dbList = @($response) }
+    $response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson -RawList
+
+    $dbList = if ($response.data) { $response.data } else { @() }
 
     if (-not $dbList) {
         Write-GiipLog "INFO" "[DbUserList] No databases found."
