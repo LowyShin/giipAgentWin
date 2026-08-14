@@ -34,15 +34,21 @@ function Get-MSSQLConnections {
         [string]$Database
     )
     
+    # NOTE: Named properties (e.g. $builder.DataSource = ...) throw
+    # "Keyword not supported: 'DataSource'" on this host's GAC System.Data.dll
+    # (reproduced in isolation, unrelated to any other module). The indexer
+    # form below hits a different internal code path and works correctly
+    # while still safely escaping special characters (quotes/semicolons) in
+    # the password, same as the property setters were meant to do.
     $builder = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
-    $builder.DataSource = "$DbHost,$Port"
+    $builder["Data Source"] = "$DbHost,$Port"
     if ($Database -and $Database.Trim()) {
-        $builder.InitialCatalog = $Database
+        $builder["Initial Catalog"] = $Database
     }
-    $builder.UserID = $User
-    $builder.Password = $Pass
-    $builder.TrustServerCertificate = $true
-    $builder.ConnectTimeout = 10
+    $builder["User ID"] = $User
+    $builder["Password"] = $Pass
+    $builder["TrustServerCertificate"] = $true
+    $builder["Connect Timeout"] = 10
     
     $conn = New-Object System.Data.SqlClient.SqlConnection($builder.ConnectionString)
     $conn.Open()
@@ -205,8 +211,8 @@ try {
 
     # 1. Get DB List from API
     $reqJson = @{ lssn = $Config.lssn } | ConvertTo-Json -Compress
-    $apiRes = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson
-    
+    $apiRes = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson -RawList
+
     $dbList = if ($apiRes.data) { $apiRes.data } else { @() }
     if ($dbList.Count -eq 0) {
         Write-GiipLog "INFO" "[DbConnectionList] No databases found."
