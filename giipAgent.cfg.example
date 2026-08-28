@@ -48,3 +48,55 @@ branch = "real"
 # az_client_id     = "00000000-0000-0000-0000-000000000000"   # app (client) ID
 # az_client_secret = "your-client-secret-value"               # client secret VALUE (not the ID)
 # az_tenant_id     = "00000000-0000-0000-0000-000000000000"   # directory (tenant) ID
+
+# ===================================================================
+# Log Collector (OPTIONAL, giip #1637 - giip #1614 4단계: Windows FDE Box 로그 수집)
+# ===================================================================
+# lib\LogCollector.ps1 이 주기적으로(Scheduled Task, "-Register"로 등록 시 매 1분,
+# 내부에서 최대 logcollector_run_duration_sec초 루프) 로그 파일을 tail하여
+# giipfaw의 agent-log-register/agent-log-ingest 로 전송한다.
+# 'logcollector_enabled'이 1/true/yes 가 아니면 스크립트는 아무 것도 하지 않고
+# 조용히 종료한다(기존 설치를 깨지 않기 위함) - 즉 이 섹션 전체를 생략해도 안전하다.
+#
+# 인증은 위의 'sk'(서버별 secret key)를 그대로 재사용한다(x-api-key 헤더).
+#
+# logcollector_enabled = "1"
+
+# (선택) 콤마 구분 경로 패턴 목록. 기본값은 giipAgentWin 자신의 운영 로그 디렉토리
+# 전체: "<repo>\logs\*.log" (git-auto-sync.ps1이 쓰는 git_auto_sync_*.log 등을
+# 포함, gissue_csn*.log 같은 다른 제품(giip-fde-agent)의 로그는 하드코딩하지
+# 않는다 - 그런 도구가 같은 Box에 설치돼 있으면 아래처럼 opt-in으로 추가한다):
+# logcollector_globs = "C:\path\to\giipAgentWin\logs\*.log,C:\path\to\giip-fde-agent\logs\*.log"
+
+# (선택) 파일 경로 패턴 -> streamType 명시적 매핑("pattern:streamType,pattern:streamType,...").
+# 매칭 안 되는 파일은 파일명 기반 휴리스틱(logs\ 하위는 agent_operational, 그 외는
+# generic_log)으로 자동 판단한다.
+# logcollector_streamtype_map = "*\gissue_csn*.log:gissue_operational"
+
+# (선택) giipdb.tSchedulerAgent류 Box 식별에 쓸 agentKey. 비어있으면
+# HKLM:\SOFTWARE\Microsoft\Cryptography 의 MachineGuid 레지스트리 값을 해시해
+# 자동 생성한 뒤, giipAgentWin 상위 폴더(giipAgent.cfg가 실제로 놓이는 위치와
+# 동일 계층)의 .giip_logcollector_agentkey 에 캐시한다(재부팅/재실행해도 동일
+# 값 유지, git-auto-sync.ps1의 체크아웃 갱신에도 영향받지 않음).
+# logcollector_agentkey = "<원하면 직접 지정>"
+
+# (선택) 배치 전송 튜닝값. 기본: 2초 또는 128KB 중 먼저 도달하는 쪽에서 전송.
+# logcollector_batch_interval_sec = "2"
+# logcollector_batch_max_bytes    = "131072"
+
+# (선택) Scheduled Task 1틱 내에서 루프를 지속할 시간(초). 기본 50(다음 1분 tick 전에 종료).
+# logcollector_run_duration_sec = "50"
+
+# (선택) 전송 실패 시 로컬 재시도 큐 용량 제한(넘으면 가장 오래된 배치부터 드롭,
+# 드롭 사실은 로그에 남는다). 기본: 최대 500개 배치 / 20MB.
+# logcollector_queue_max_batches = "500"
+# logcollector_queue_max_mb      = "20"
+
+# (선택) agent-log-register/agent-log-ingest 등 agent-* Function들의 base URL.
+# 기본값: apiaddrv2 에서 마지막 path segment를 뗀 값
+# (예: https://giipfaw.azurewebsites.net/api/giipApiSk2 -> https://giipfaw.azurewebsites.net/api)
+# agentapibase = "https://giipfaw.azurewebsites.net/api"
+
+# (선택) 위 Function들이 authLevel=function 이라 Azure Functions key가 필요한
+# 경우에만 설정(x-functions-key 헤더 + ?code= 쿼리 둘 다 시도됨).
+# agentfunctionkey = "<azure functions key>"
