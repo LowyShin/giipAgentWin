@@ -15,11 +15,16 @@
 [CmdletBinding()]
 param(
     [switch]$Register,               # Register a daily Scheduled Task and exit
-    [string]$AtTime = "06:00",       # Daily run time (for -Register)
+    [string]$AtTime = "09:30",       # Daily run time (for -Register). giip #1919 (2026-09-02): moved
+                                      # from 06:00 to 09:30 KST -- 06:00 KST = 21:00 UTC the PREVIOUS day,
+                                      # so on the 1st of every month the MonthToDate query (UTC calendar)
+                                      # hadn't rolled over yet and returned ~last month's total mislabeled
+                                      # as day-1 (see "월 경계 MonthToDate 미반영 버그" note near Query #1).
+                                      # 09:30 KST = 00:30 UTC, safely after the UTC-midnight rollover.
     [string]$SubscriptionId,         # Target subscription (else cfg az_subscription / current)
     [int]$Days = 0,                  # Last N days (Custom); 0 = MonthToDate
                                       # WARNING (giip-762, 2026-07-26): -Days>0 with the default -Factor
-                                      # overwrites the SAME KVS coordinate the daily 06:00 job uses, which
+                                      # overwrites the SAME KVS coordinate the daily 09:30 job uses, which
                                       # hides the "월말 예상" projection card on azure-cost until the next
                                       # MonthToDate run. For ad-hoc/debug runs, pass a different -Factor
                                       # (e.g. azure_cost_test) instead of the production one.
@@ -101,6 +106,22 @@ $subId   = $acct.id
 $subName = $acct.name
 
 # --- Resolve shared timeframe once (both axes use the same period) ------------
+# 월 경계 MonthToDate 미반영 버그 (giip #1919, 2026-09-02 discovered/fixed):
+# Cost Management's "MonthToDate" timeframe rolls over on the UTC calendar, not KST.
+# The daily job used to run at 06:00 KST = 21:00 UTC of the PREVIOUS day. On the 1st
+# of a month that means the MonthToDate query still executes before the UTC month
+# has rolled over, so it returns ~all of LAST month's accumulated cost -- which the
+# script then labels with TODAY's (the 1st's) date/collected_at. Evidence (raw JSON
+# properties.rows PreTaxCost sums, no reset across the boundary):
+#   azure_cost_..._20260730.json -> 964,949
+#   azure_cost_..._20260731.json -> 998,373
+#   azure_cost_..._20260801.json -> 1,044,589   (still climbing -- July's total, not a fresh August MTD)
+# Real-world impact: the live KVS 9/1 record carried ~all of August's cost
+# (total_pretax_cost=1,383,717.8157) mislabeled as September 1st, which fed
+# giipv3 azure-cost's "월말 예상" projection (total × days-in-month ÷ day-of-month,
+# spec §12.7) and inflated it to ~41.51M KRW (actual monthly run-rate: ~1.1-1.4M KRW).
+# Fix: move the daily schedule from 06:00 to 09:30 KST (= 00:30 UTC, safely after
+# the UTC-midnight rollover) -- see the -AtTime default below.
 $today = Get-Date
 if ($Days -gt 0) {
     $from = $today.AddDays(-$Days).ToString("yyyy-MM-ddT00:00:00+00:00")
@@ -124,15 +145,15 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 # ServiceName) returns both columns in the same row set instead of two calls.
 # Cost Management enforces strict 429 rate limits -> retry up to 5x, growing backoff.
 # az rest --body @file avoids shell-quoting issues (BOM-less UTF-8 temp file).
-# Returns @{ Raw = <json string>; Result = <parsed object> } on success.
-# On failure: -Required hard-exits(1) (used for the ServiceName axis the whole run
-# depends on); otherwise returns $null so the caller can degrade gracefully instead
-# of losing axes that already succeeded (giip #873 — a 429 on query #2/#3 used to
-# exit 1 and drop the already-collected/saved service-axis data along with it).
+# Returns @{ Raw = <json string>; Result = <parsed object> } on success, or $null on
+# failure so every caller (all three axes, as of giip #1919) can degrade gracefully
+# via carry-forward instead of losing axes that already succeeded (giip #873 — a 429
+# on query #2/#3 used to exit 1 and drop the already-collected/saved service-axis
+# data along with it; giip #1919 extended this to the ServiceName axis itself,
+# which previously used -Required to hard-exit(1) and lose the ENTIRE run).
 function Invoke-CmQuery {
     param(
-        [Parameter(Mandatory)][string[]]$GroupDimensions,
-        [switch]$Required
+        [Parameter(Mandatory)][string[]]$GroupDimensions
     )
 
     $label = $GroupDimensions -join "+"
@@ -181,13 +202,11 @@ function Invoke-CmQuery {
         }
         Write-TaskLog "ERROR" "Cost Management query ($label) failed: $rawJson"
         Remove-Item $tmpBody -ErrorAction SilentlyContinue
-        if ($Required) { exit 1 }
         return $null
     }
     Remove-Item $tmpBody -ErrorAction SilentlyContinue
     if (-not $rawJson -or $rawJson -match '429|Too Many Requests') {
         Write-TaskLog "ERROR" "Cost Management query ($label) still failing (429) after 5 retries."
-        if ($Required) { exit 1 }
         return $null
     }
 
@@ -203,26 +222,40 @@ function Invoke-CmQuery {
 }
 
 # --- Query #1: by ServiceName (existing axis -> by_service) -------------------
-# Required: the raw dump, total cost and by_service breakdown all derive from this.
-$svcQ   = Invoke-CmQuery -GroupDimensions @("ServiceName") -Required
-$rawJson = $svcQ.Raw
-$result  = $svcQ.Result
-$cols = @($result.properties.columns.name)
-$rows = @($result.properties.rows)
+# giip #1919: no longer -Required / hard exit(1) on failure. A full 429 exhaustion
+# used to kill the ENTIRE run (all three axes) even though the ResourceGroupName
+# axes below already had carry-forward (giip #1028/#1067) -- real incident: 5 of
+# the last 20 days (8/17, 8/26, 8/30, 8/31, 9/2) lost the whole day's KVS update
+# this way. Same carry-forward pattern as the RG axes is applied in the Summarize
+# section below (Get-PreviousAzureCostValue, defined further down, is shared
+# across all three axes and only fetches KVS once).
+$svcQ = Invoke-CmQuery -GroupDimensions @("ServiceName")
 
-$iCost = [array]::IndexOf($cols, "PreTaxCost")
-$iSvc  = [array]::IndexOf($cols, "ServiceName")
-$iCur  = [array]::IndexOf($cols, "Currency")
-if ($iCost -lt 0) { Write-TaskLog "ERROR" "Unexpected response shape (no PreTaxCost column)."; exit 1 }
+$rawJson = $null
+$rows    = @()
+$iSvc = -1; $iCost = -1; $iCur = -1
+if ($svcQ) {
+    $rawJson = $svcQ.Raw
+    $result  = $svcQ.Result
+    $cols = @($result.properties.columns.name)
+    $rows = @($result.properties.rows)
 
-# --- Save raw JSON (UTF-8, no BOM) — service-axis dump is the canonical raw ----
-if (-not $OutFile) {
-    $azDir = Join-Path $AgentRoot "..\giipLogs\azure"
-    if (-not (Test-Path $azDir)) { New-Item -Path $azDir -ItemType Directory -Force | Out-Null }
-    $OutFile = Join-Path $azDir ("azure_cost_{0}_{1}.json" -f $subId, $today.ToString("yyyyMMdd"))
+    $iCost = [array]::IndexOf($cols, "PreTaxCost")
+    $iSvc  = [array]::IndexOf($cols, "ServiceName")
+    $iCur  = [array]::IndexOf($cols, "Currency")
+    if ($iCost -lt 0) { Write-TaskLog "ERROR" "Unexpected response shape (no PreTaxCost column)."; exit 1 }
+
+    # --- Save raw JSON (UTF-8, no BOM) — service-axis dump is the canonical raw ----
+    if (-not $OutFile) {
+        $azDir = Join-Path $AgentRoot "..\giipLogs\azure"
+        if (-not (Test-Path $azDir)) { New-Item -Path $azDir -ItemType Directory -Force | Out-Null }
+        $OutFile = Join-Path $azDir ("azure_cost_{0}_{1}.json" -f $subId, $today.ToString("yyyyMMdd"))
+    }
+    [System.IO.File]::WriteAllText($OutFile, $rawJson, $utf8NoBom)
+    Write-TaskLog "INFO" "Saved raw cost JSON ($($rows.Count) service rows) -> $OutFile"
+} else {
+    Write-TaskLog "WARN" "ServiceName query failed after retries; attempting carry-forward from last KVS record (giip #1919)."
 }
-[System.IO.File]::WriteAllText($OutFile, $rawJson, $utf8NoBom)
-Write-TaskLog "INFO" "Saved raw cost JSON ($($rows.Count) service rows) -> $OutFile"
 
 # --- Carry-forward helper (giip #1028) -----------------------------------------
 # giip #873 stopped a 429 on the RG axes from exit 1'ing and losing the whole run's
@@ -362,16 +395,39 @@ if ($rgSvcQ) {
 Write-TaskLog "INFO" "Collected $($byResourceGroupService.Count) resource-group x service groups."
 
 # --- Summarize (this becomes kValue) -----------------------------------------
-$services = foreach ($row in $rows) {
-    [PSCustomObject]@{
-        service = if ($iSvc -ge 0) { $row[$iSvc] } else { "All" }
-        cost    = [math]::Round([double]$row[$iCost], 4)
+$svcStaleSince = $null
+if ($svcQ) {
+    $services = foreach ($row in $rows) {
+        [PSCustomObject]@{
+            service = if ($iSvc -ge 0) { $row[$iSvc] } else { "All" }
+            cost    = [math]::Round([double]$row[$iCost], 4)
+        }
+    }
+    $services = @($services | Sort-Object cost -Descending)
+    $total = 0.0
+    foreach ($row in $rows) { $total += [double]$row[$iCost] }
+    $currency = if ($rows.Count -gt 0 -and $iCur -ge 0) { $rows[0][$iCur] } else { $null }
+} else {
+    # giip #1919: ServiceName axis 429-exhausted -- carry forward by_service /
+    # total_pretax_cost / currency from the last KVS record (same helper the RG
+    # axes use below; by this point it may already be cached from a prior call).
+    $prevForSvc  = Get-PreviousAzureCostValue
+    $prevSvcList = @($prevForSvc.by_service)
+    if ($prevForSvc -and $prevSvcList.Count -gt 0) {
+        $services = $prevSvcList
+        $total    = $prevForSvc.total_pretax_cost
+        $currency = $prevForSvc.currency
+        $svcStaleSince = if ($prevForSvc.by_service_stale_since) { $prevForSvc.by_service_stale_since } else { $prevForSvc.collected_at }
+        Write-TaskLog "WARN" "Carried forward $($services.Count) service rows (total=$total $currency) from $svcStaleSince (429 exhausted for today's run)."
+    } else {
+        # No prior KVS record to carry forward (new csn/subscription, or first
+        # collection ever exhausted 429) -- nothing usable to push, so abort the
+        # run rather than push an empty/wrong total (same principle as the RG
+        # axes' "no previous value" branch below).
+        Write-TaskLog "ERROR" "ServiceName query failed (429 exhausted) and no previous by_service KVS value to carry forward. Aborting."
+        exit 1
     }
 }
-$services = @($services | Sort-Object cost -Descending)
-$total = 0.0
-foreach ($row in $rows) { $total += [double]$row[$iCost] }
-$currency = if ($rows.Count -gt 0 -and $iCur -ge 0) { $rows[0][$iCur] } else { $null }
 
 $summary = [PSCustomObject]@{
     subscription_id      = $subId
@@ -386,9 +442,10 @@ $summary = [PSCustomObject]@{
     by_resource_group_service = $byResourceGroupService
     collected_at         = $today.ToString("s")
 }
-# giip #1028: mark RG-axis fields as carried-forward from an earlier run (429
+# giip #1028/#1919: mark axis fields as carried-forward from an earlier run (429
 # exhausted today) so the KVS record is honest about *when* that data is from,
 # instead of silently implying it was collected at $today like everything else.
+if ($svcStaleSince) { $summary | Add-Member -NotePropertyName "by_service_stale_since" -NotePropertyValue $svcStaleSince }
 if ($rgStaleSince) { $summary | Add-Member -NotePropertyName "by_resource_group_stale_since" -NotePropertyValue $rgStaleSince }
 if ($rgSvcStaleSince) { $summary | Add-Member -NotePropertyName "by_resource_group_service_stale_since" -NotePropertyValue $rgSvcStaleSince }
 # giip #1067: 429 exhausted AND no previous KVS value existed to carry forward -- the axis

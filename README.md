@@ -196,8 +196,8 @@ $env:LOCALAPPDATA\GIIP\logs\
    ```powershell
    # 수동 실행(최근 7일)
    .\giipscripts\azure-cost-put-win.ps1 -Days 7
-   # 매일 06:00 예약 작업 등록
-   .\giipscripts\azure-cost-put-win.ps1 -Register -AtTime "06:00"
+   # 매일 09:30 예약 작업 등록 (KST, UTC 자정 이후 안전마진 확보 목적 — giip #1919)
+   .\giipscripts\azure-cost-put-win.ps1 -Register -AtTime "09:30"
    ```
 
 - 조회 페이지(giipv3): 서비스별 `/{locale}/azure-cost`, 리소스 그룹별 `/{locale}/azure-cost-rg`.
