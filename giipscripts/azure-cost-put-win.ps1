@@ -459,6 +459,24 @@ $resp = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -F
 
 if ($resp -and ($resp.RstVal -eq "200" -or $resp.RstVal -eq 200)) {
     Write-TaskLog "INFO" "Azure cost uploaded successfully."
+
+    # giip #1956: tKVS는 pAdmCleanTable(@dterm 기본 34일)이 아카이브 없이 주기 삭제한다. push 직후
+    # 즉시 tAzureCostSnapshot(장기 보관 겸 조회 전용 테이블)에 반영해 34일 삭제 전 유실을 막는다.
+    # 실패해도 조회 SP(pApiAzureCostbyAK 등)가 tKVS raw fallback으로 즉시 복구 가능하므로 WARN만 남기고
+    # 이 스크립트 자체의 성공/실패(exit code)에는 영향을 주지 않는다.
+    try {
+        $syncJson = (@{ lssn = "$($Config.lssn)" } | ConvertTo-Json -Compress)
+        $syncResp = Invoke-GiipApiV2 -Config $Config -CommandText "AzureCostSnapshotSync lssn" -JsonData $syncJson
+        if ($syncResp -and ($syncResp.RstVal -eq "200" -or $syncResp.RstVal -eq 200)) {
+            Write-TaskLog "INFO" "Azure cost snapshot sync (tAzureCostSnapshot) succeeded."
+        } else {
+            $srv = if ($syncResp) { $syncResp.RstVal } else { "no-response" }
+            Write-TaskLog "WARN" "Azure cost snapshot sync failed (RstVal=$srv) -- tKVS push already succeeded, read-path raw fallback will cover the gap."
+        }
+    } catch {
+        Write-TaskLog "WARN" "Azure cost snapshot sync threw: $($_.Exception.Message) -- tKVS push already succeeded, read-path raw fallback will cover the gap."
+    }
+
     exit 0
 } else {
     $rv = if ($resp) { $resp.RstVal } else { "no-response" }
