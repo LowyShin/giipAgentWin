@@ -75,6 +75,40 @@ if ($Register) {
     return
 }
 
+# --- Self-update: 이 스크립트는 fleet(real 브랜치) 배포 대상이 아니라 이 PC(Lowy-DP01)
+# 전용 standalone 수집기이므로, origin/main 대비 fast-forward 자동 pull로 최신 코드를
+# 유지한다. giip #1956/#2054: 로컬 체크아웃이 며칠간 뒤처져 AzureCostSnapshotSync 호출이
+# 반영 안 된 채 조용히 스킵되던 사고 재발 방지. 실패해도 수집 자체는 막지 않는다(WARN-only).
+try {
+    $gitDir = Join-Path $AgentRoot ".git"
+    if (Test-Path $gitDir) {
+        Push-Location $AgentRoot
+        try {
+            $dirty = (git status --porcelain 2>$null)
+            if ([string]::IsNullOrWhiteSpace($dirty)) {
+                git fetch origin main --quiet 2>$null
+                $behind = (git rev-list --count "HEAD..origin/main" 2>$null)
+                if ($behind -and [int]$behind -gt 0) {
+                    $before = (git rev-parse --short HEAD)
+                    git pull --ff-only origin main --quiet 2>$null
+                    if ($LASTEXITCODE -eq 0) {
+                        $after = (git rev-parse --short HEAD)
+                        Write-TaskLog "INFO" "Self-update: $before -> $after ($behind commit(s) pulled from origin/main)"
+                    } else {
+                        Write-TaskLog "WARN" "Self-update: git pull --ff-only failed (exit $LASTEXITCODE); continuing with current checkout."
+                    }
+                }
+            } else {
+                Write-TaskLog "WARN" "Self-update skipped: local checkout has uncommitted changes."
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+} catch {
+    Write-TaskLog "WARN" "Self-update check failed: $($_.Exception.Message)"
+}
+
 try {
 
 # --- Load config -------------------------------------------------------------
