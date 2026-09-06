@@ -31,6 +31,7 @@ $Global:BaseDir = $AgentRoot
 
 . (Join-Path $LibDir "Common.ps1")
 . (Join-Path $LibDir "Kvs.ps1")
+. (Join-Path $ScriptDir "cloud-monitor-azure-put-win-lib.ps1")
 
 $CmLogDir = Join-Path $AgentRoot "..\giipLogs\cloudmonitor"
 if (-not (Test-Path $CmLogDir)) { New-Item -Path $CmLogDir -ItemType Directory -Force | Out-Null }
@@ -299,38 +300,27 @@ try {
             }
         }
 
-        # Resource BatchUpsert (chunked due to URI/EscapeDataString limit ~32KB per segment)
-        # IMPORTANT: CloudCollectionComplete is called ONCE at the end with the LAST chunk's
-        # missing_count. This avoids the SP's NOT EXISTS(batch) false-MISSING problem:
-        # each partial chunk marks resources NOT in that chunk as missing, but since we
-        # only report the LAST chunk's missing_count (which is 0 — last chunk contains
-        # all resources not previously upserted), no false MISSING state is recorded.
-        $chunkSize = 30
-        $totalUpsert = 0
-        $lastMissing = 0
+        # Resource BatchUpsert — single call (no chunking) to avoid SP's NOT EXISTS
+        # false-MISSING: each chunked call marks resources NOT in that chunk as missing,
+        # corrupting tCloudResource even if CloudCollectionComplete reports success.
+        # Using Invoke-GiipApiV2Large (chunked URL encoding) to bypass EscapeDataString's
+        # internal buffer limit on very long JSON strings.
+        $batchJson = (@{
+            connection_id  = $ConnectionId
+            collection_id  = $collectionId
+            resources_json = @($mappedResources)
+        } | ConvertTo-Json -Depth 10 -Compress)
+        $upsertResp = Invoke-GiipApiV2Large -Config $Config -CommandText "CloudResourceBatchUpsert connection_id collection_id resources_json" -JsonData $batchJson
         $batchFailed = $false
-        $batchErrorMsg = ""
-        $numChunks = [Math]::Ceiling($mappedResources.Count / $chunkSize)
-        for ($i = 0; $i -lt $mappedResources.Count; $i += $chunkSize) {
-            $chunk = $mappedResources[$i..[Math]::Min($i+$chunkSize-1, $mappedResources.Count-1)]
-            $chunkNum = [int]($i / $chunkSize) + 1
-            $batchJson = (@{
-                connection_id  = $ConnectionId
-                collection_id  = $collectionId
-                resources_json = @($chunk)
-            } | ConvertTo-Json -Depth 10 -Compress)
-            $upsertResp = Invoke-GiipApiV2 -Config $Config -CommandText "CloudResourceBatchUpsert connection_id collection_id resources_json" -JsonData $batchJson
-            if ($upsertResp.RstVal -ne 200) {
-                $batchFailed = $true
-                $batchErrorMsg = "BatchUpsert chunk $chunkNum/$numChunks failed: $($upsertResp.RstMsg)"
-                Write-TaskLog "ERROR" $batchErrorMsg
-                break
-            }
-            $totalUpsert += $upsertResp.upsert_count
-            # Capture last chunk's missing_count — this is the only one we will report
-            if ($chunkNum -eq $numChunks) {
-                $lastMissing = $upsertResp.missing_count
-            }
+        $totalUpsert = 0
+        $totalMissing = 0
+        if (-not $upsertResp -or $upsertResp.RstVal -ne 200) {
+            $batchFailed = $true
+            $batchErrorMsg = if ($upsertResp) { "BatchUpsert failed: $($upsertResp.RstMsg)" } else { "BatchUpsert failed: no response" }
+            Write-TaskLog "ERROR" $batchErrorMsg
+        } else {
+            $totalUpsert = $upsertResp.upsert_count
+            $totalMissing = $upsertResp.missing_count
         }
 
         if ($batchFailed) {
@@ -339,19 +329,19 @@ try {
             exit 1
         }
 
-        # Collection Complete (SUCCEEDED) — called ONCE with last chunk's missing_count
+        # Collection Complete (SUCCEEDED) — called ONCE with the single upsert's real missing_count
         $completeJson = (@{
             collection_id   = $collectionId
             status          = "SUCCEEDED"
             total_count     = $resources.Count
             upsert_count    = $totalUpsert
-            missing_count   = $lastMissing
+            missing_count   = $totalMissing
             raw_kvs_ksn     = $null
             error_message   = $null
         } | ConvertTo-Json -Compress)
         $completeResp = Invoke-GiipApiV2 -Config $Config -CommandText "CloudCollectionComplete collection_id status total_count upsert_count missing_count raw_kvs_ksn error_message" -JsonData $completeJson
 
-        Write-TaskLog "INFO" "Collection $collectionId complete: total=$($resources.Count) upsert=$totalUpsert missing=$lastMissing"
+        Write-TaskLog "INFO" "Collection $collectionId complete: total=$($resources.Count) upsert=$totalUpsert missing=$totalMissing"
         exit 0
 
     } finally {
