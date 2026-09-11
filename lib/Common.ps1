@@ -7,6 +7,12 @@
 $ErrorActionPreference = "Stop"
 
 # Function: Log to local file and console
+# giip #2338: previously this only wrote to the console (Write-Host), so when
+# giipAgent3.ps1 hung (2026-09-09~11 incident) there was no on-disk trail to
+# tell which Step it was stuck in -- giipLogs\giipAgentWin_*.log files were
+# all stale (last write 2026-05-16). Now every call also best-effort appends
+# to giipLogs\giipAgentWin_YYYYMMDD.log (sibling of the repo, same layout
+# lib/LogCleanup.ps1 already expects). Signature is unchanged.
 function Write-GiipLog {
     param(
         [string]$Level,
@@ -15,6 +21,20 @@ function Write-GiipLog {
     $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $LogLine = "[$Timestamp] [$Level] $Message"
     Write-Host $LogLine
+
+    try {
+        $base = if ($Global:BaseDir) { $Global:BaseDir } else { $PSScriptRoot }
+        $logDir = Join-Path $base "..\giipLogs"
+        if (-not (Test-Path $logDir)) {
+            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+        }
+        $logFile = Join-Path $logDir ("giipAgentWin_{0}.log" -f (Get-Date -Format "yyyyMMdd"))
+        Add-Content -Path $logFile -Value $LogLine -Encoding UTF8 -ErrorAction Stop
+    } catch {
+        # File logging is best-effort only. Never let a logging failure
+        # (e.g. locked file, missing permissions) break the caller -- the
+        # console line above has already surfaced the message.
+    }
 }
 
 # Function: Load giipAgent Configuration
