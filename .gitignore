@@ -16,6 +16,9 @@ giipLogs/
 *.tmp
 *.temp
 giipTmpScript.*
+
+# Process lock files (giip #2338 - runtime PID/start-time markers)
+*.lock
 discovery-output*.json
 data/
 logs/
