@@ -227,43 +227,10 @@ function ConvertFrom-GzipBytes {
     return $text
 }
 
-# agentKey 해석: logcollector_agentkey(cfg) > 캐시파일 > (hostname + MachineGuid 해시) 생성 후 캐시
-# 캐시 파일은 repo 밖(InstallDir)에 둬서 git-auto-sync.ps1의 체크아웃 갱신에 영향받지 않는다.
-function Resolve-AgentKey {
-    param($Config, [string]$CacheFile)
-    if ($Config -and $Config['logcollector_agentkey']) { return $Config['logcollector_agentkey'] }
-    if (Test-Path $CacheFile) {
-        try {
-            $cached = (Get-Content -Path $CacheFile -Raw -Encoding UTF8 -ErrorAction Stop).Trim()
-            if ($cached) { return $cached }
-        } catch {}
-    }
-    $hn = $env:COMPUTERNAME
-    if (-not $hn) { $hn = "unknown-host" }
-    $guidPart = $null
-    try {
-        $mg = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Cryptography" -Name MachineGuid -ErrorAction Stop).MachineGuid
-        if ($mg) {
-            $clean = $mg -replace '-', ''
-            $guidPart = $clean.Substring(0, [Math]::Min(12, $clean.Length))
-        }
-    } catch {
-        Write-CollectorLog "WARN" "Resolve-AgentKey: MachineGuid registry read failed ($($_.Exception.Message)) - falling back to a random persisted key."
-    }
-    if ($guidPart) {
-        $key = "$hn-$guidPart"
-    } else {
-        $key = "$hn-" + ([guid]::NewGuid().ToString('N').Substring(0, 12))
-    }
-    try {
-        $dir = Split-Path -Path $CacheFile -Parent
-        if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-        Set-Content -Path $CacheFile -Value $key -Encoding UTF8 -NoNewline
-    } catch {
-        Write-CollectorLog "WARN" "Resolve-AgentKey: failed to cache agentKey to $CacheFile"
-    }
-    return $key
-}
+# agentKey 해석 함수 Resolve-AgentKey는 giip #2390에서 lib/Common.ps1로 이동했다
+# (giipAgent3.ps1도 동일한 결정론적 agentKey를 재사용해야 하기 때문 - 위
+# "Get-GiipConfig / Write-GiipLog / Invoke-GiipApiV2" 주석의 Common.ps1
+# dot-source로 이미 로드됨). 호출부(아래 Invoke-LogCollectorRun 내부)는 변경 없음.
 
 function Get-AgentApiBase {
     param($Config)
@@ -505,11 +472,57 @@ function Send-LogIngestBatch {
 function Invoke-SchedulerAgentBootstrap {
     param($Config, [string]$AgentKey)
     $displayName = "giipAgentWin-$env:COMPUTERNAME"
-    $jsonData = (@{ agentKey = $AgentKey; displayName = $displayName } | ConvertTo-Json -Compress)
+
+    # giip #2390: lssn/osType/agentType 보강.
+    #
+    # ⚠️ 위치기반 디스패처 주의(giipfaw/giipApiSk2/run.ps1 직접 확인): 이 SP 호출은
+    # "EXEC pApiSchedulerAgentUpsertBySK '<sk>', <v1>, <v2>, ..." 형태의 이름 없는
+    # (unnamed) 위치기반 호출로 조립된다. T-SQL의 unnamed EXEC는 중간 파라미터를
+    # 건너뛸 수 없으므로, SP 선언 순서(@agentKey, @displayName, @hostIdentifier,
+    # @windowsTaskName, @projectName, @scheduleDesc, @isActive, @lssn, @osType,
+    # @agentType, ...)상 lssn/osType/agentType보다 앞선 hostIdentifier/
+    # windowsTaskName/projectName/scheduleDesc/isActive를 전부 채워야만 실제로
+    # lssn/osType/agentType 위치에 값이 들어간다 - 안 채우고 토큰만
+    # "agentKey displayName lssn osType agentType"로 이어붙이면 lssn 값이
+    # hostIdentifier 자리로, osType이 windowsTaskName 자리로 밀려 들어가는 식으로
+    # 완전히 엉뚱한 컬럼을 덮어쓴다(코드 확인 중 실측 발견, 겉보기엔 200 OK를
+    # 반환해 눈치채기 어려움). 다행히 hostIdentifier(호스트명)/windowsTaskName
+    # (TaskSchdReg.ps1이 등록하는 실제 Task 이름)/projectName은 이 참에 채울 만한
+    # 실제 값이 있어 NULL 유지 문제를 우회한다(매 실행마다 동일 값 upsert,
+    # idempotent).
+    $values = [ordered]@{
+        agentKey        = $AgentKey
+        displayName     = $displayName
+        hostIdentifier  = $env:COMPUTERNAME
+        windowsTaskName = "GIIP Agent Task (v3)"
+        projectName     = "giipAgentWin"
+        scheduleDesc    = "Windows Task Scheduler, giipAgent3.ps1, 5-minute trigger"
+        isActive        = 1
+    }
+
+    $lssnVal = $null
+    if ($Config -and $Config['lssn']) {
+        $parsed = 0
+        if ([int]::TryParse([string]$Config['lssn'], [ref]$parsed) -and $parsed -gt 0) { $lssnVal = $parsed }
+    }
+    if ($null -ne $lssnVal) {
+        $values['lssn']      = $lssnVal
+        $values['osType']    = "Windows"
+        $values['agentType'] = "giipAgentWin"
+    } else {
+        Write-CollectorLog "WARN" "SchedulerAgentUpsert bootstrap: Config.lssn missing/invalid ('$($Config['lssn'])') - skipping lssn/osType/agentType this run."
+    }
+
+    # jsonData 프로퍼티 치환 대신 값을 CommandText에 직접 SQL 리터럴로 박아
+    # 넣는다(ConvertTo-DispatcherSqlLiteral, lib/Common.ps1 참고 - dispatcher의
+    # jsonData 자동추가(ISN 161) 함정을 피하려는 것). JsonData는 그래서 빈
+    # 문자열로 보낸다.
+    $literals = $values.Values | ForEach-Object { ConvertTo-DispatcherSqlLiteral $_ }
+    $commandText = "SchedulerAgentUpsert " + ($literals -join ' ')
     try {
-        $resp = Invoke-GiipApiV2 -Config $Config -CommandText "SchedulerAgentUpsert agentKey displayName" -JsonData $jsonData
+        $resp = Invoke-GiipApiV2 -Config $Config -CommandText $commandText -JsonData ""
         if ($resp -and (("$($resp.RstVal)") -eq "200")) {
-            Write-CollectorLog "INFO" "SchedulerAgentUpsert bootstrap OK agentKey=$AgentKey"
+            Write-CollectorLog "INFO" "SchedulerAgentUpsert bootstrap OK agentKey=$AgentKey lssn=$lssnVal"
             return $true
         }
         $respDump = if ($resp) { ($resp | ConvertTo-Json -Compress -ErrorAction SilentlyContinue) } else { "<null>" }
