@@ -44,28 +44,74 @@
 #   EXEC에서도 안전 - SP 자체의 DEFAULT가 적용됨. 중간 파라미터는 생략 불가하지만
 #   여기선 전부 채우므로 해당 없음).
 # ----------------------------------------------------------------------------
+#
+# giip #2470: 이 SP 는 tSchedulerAgent 에 (csn, agentKey) 행이 있어야만 200 을 준다.
+# 행이 없으면 "404|Agent not found" 를 돌려주는데, 기존 구현은 그걸 WARN 한 줄
+# 찍고 끝내서 Task Scheduler 5분 트리거마다 영구히 서버 ErrorLogs 를 쌓았다
+# (LOWYDN01 실측: 24시간 576건, 평소의 약 35배). 이제 404 를 만나면
+#   (1) pApiSchedulerAgentUpsertBySK 로 자가등록을 시도하고 한 번만 재시도하고,
+#   (2) 그래도 안 되면 실패를 누적 기록한 뒤 백오프에 들어간다.
+# 백오프 창 안에서는 API 호출 자체를 건너뛰므로 서버 로그가 더 쌓이지 않지만,
+# 첫 발생 시각(firstSeenUtc)과 누적 횟수(totalCount)는 상태파일에 계속 남고
+# 백오프가 끝나면 반드시 다시 시도한다 - 조용히 버리는 것이 아니다.
+# 상세: lib/SchedulerAgentRegister.ps1
+#
 function Invoke-SchedulerAgentRunStart {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]$Config,
         [Parameter(Mandatory)][string]$AgentKey,
         [Parameter(Mandatory)][string]$RunIdKey,
-        [string]$ExecutionMode = "scheduled"
+        [string]$ExecutionMode = "scheduled",
+        # giip #2470: 404 누적/백오프 상태파일을 둘 폴더(보통 InstallDir).
+        # 지정하지 않으면 자가등록/백오프 없이 기존 동작 그대로다(하위호환).
+        [string]$StateDir
     )
-    try {
+    $statePath = $null
+    if ($StateDir) {
+        $statePath = Get-SchedulerAgentStatePath -StateDir $StateDir
+        if (Test-SchedulerAgentBackoffActive -StatePath $statePath) { return $false }
+    }
+
+    $invoke = {
         $literals = @($RunIdKey, $AgentKey, $ExecutionMode) | ForEach-Object { ConvertTo-DispatcherSqlLiteral $_ }
         $commandText = "SchedulerAgentRunStart " + ($literals -join ' ')
+        Invoke-GiipApiV2 -Config $Config -CommandText $commandText -JsonData ""
+    }
 
-        $resp = Invoke-GiipApiV2 -Config $Config -CommandText $commandText -JsonData ""
+    try {
+        $resp = & $invoke
         if ($resp -and (("$($resp.RstVal)") -eq "200")) {
             Write-GiipLog "INFO" "SchedulerAgentRunStart OK runIdKey=$RunIdKey agentKey=$AgentKey runId=$($resp.run_id) action=$($resp.action)"
+            if ($statePath) { Clear-SchedulerAgentBackoff -StatePath $statePath }
             return $true
         }
+
         $respDump = if ($resp) { ($resp | ConvertTo-Json -Compress -ErrorAction SilentlyContinue) } else { "<null>" }
+
+        # giip #2470: 404 = tSchedulerAgent 미등록. 자가등록 후 1회만 재시도한다.
+        if ($statePath -and $resp -and (("$($resp.RstVal)") -eq "404")) {
+            Write-GiipLog "WARN" "SchedulerAgentRunStart 404 (Agent not found) - attempting tSchedulerAgent self-registration. agentKey=$AgentKey"
+            if (Invoke-SchedulerAgentUpsert -Config $Config -AgentKey $AgentKey) {
+                $resp = & $invoke
+                if ($resp -and (("$($resp.RstVal)") -eq "200")) {
+                    Write-GiipLog "INFO" "SchedulerAgentRunStart OK (after self-registration retry) runIdKey=$RunIdKey agentKey=$AgentKey runId=$($resp.run_id)"
+                    Clear-SchedulerAgentBackoff -StatePath $statePath
+                    return $true
+                }
+                $respDump = if ($resp) { ($resp | ConvertTo-Json -Compress -ErrorAction SilentlyContinue) } else { "<null>" }
+            }
+            Write-GiipLog "WARN" "SchedulerAgentRunStart still failing after self-registration resp=$respDump"
+            Add-SchedulerAgentFailure -StatePath $statePath -Reason "404|Agent not found (self-register retry failed)" | Out-Null
+            return $false
+        }
+
         Write-GiipLog "WARN" "SchedulerAgentRunStart non-200 resp=$respDump"
+        if ($statePath) { Add-SchedulerAgentFailure -StatePath $statePath -Reason "non-200" | Out-Null }
         return $false
     } catch {
         Write-GiipLog "WARN" "SchedulerAgentRunStart failed: $($_.Exception.Message)"
+        if ($statePath) { Add-SchedulerAgentFailure -StatePath $statePath -Reason "exception: $($_.Exception.Message)" | Out-Null }
         return $false
     }
 }
