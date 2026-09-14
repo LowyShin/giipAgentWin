@@ -37,7 +37,15 @@ try {
         throw "ProcessLock library not found at: $(Join-Path $LibDir 'ProcessLock.ps1')"
     }
 
-    # 4. Scheduler Agent Run history Library (giip #2390)
+    # 4. Scheduler Agent 등록/백오프 Library (giip #2470)
+    #    SchedulerAgentRun.ps1 이 404 자가등록에 쓰므로 반드시 먼저 로드한다.
+    if (Test-Path (Join-Path $LibDir "SchedulerAgentRegister.ps1")) {
+        . (Join-Path $LibDir "SchedulerAgentRegister.ps1")
+    } else {
+        throw "SchedulerAgentRegister library not found at: $(Join-Path $LibDir 'SchedulerAgentRegister.ps1')"
+    }
+
+    # 5. Scheduler Agent Run history Library (giip #2390)
     if (Test-Path (Join-Path $LibDir "SchedulerAgentRun.ps1")) {
         . (Join-Path $LibDir "SchedulerAgentRun.ps1")
     } else {
@@ -83,9 +91,19 @@ Write-GiipLog "INFO" "=== giipAgent3.ps1 Started ==="
 # 영향을 주면 안 되므로 감싼다. Invoke-SchedulerAgentRun* 두 함수는 내부에서
 # 이미 failure-tolerant 하지만, 그 앞단(Get-GiipConfig/Resolve-AgentKey)까지
 # 포함해 한 번 더 감싸 완전히 안전하게 만든다.
+#
+# giip #2470: 예전에는 여기서 RunStart 만 부르고 tSchedulerAgent 등록(부트스트랩)은
+# 하지 않았다. 그 부트스트랩은 lib/LogCollector.ps1 안에만 있었고 이 스크립트는
+# LogCollector.ps1 을 dot-source 하지도 않아서, LogCollector 를 돌리지 않는
+# 호스트에서는 에이전트 행이 영원히 안 생기고 5분마다 RunStart/RunEnd 가 각각
+# 404 로 실패했다. 이제 RunStart 가 404 를 만나면 스스로 등록 후 재시도하고,
+# 그래도 실패하면 백오프에 들어간다(-StateDir). 또 RunStart 가 실패/스킵됐으면
+# 아래 finally 의 RunEnd 도 건너뛴다 - 짝이 안 맞는 호출로 404 를 두 배로
+# 쌓지 않기 위함이다.
 $Config = $null
 $agentKey = $null
 $runIdKey = $null
+$runStartOk = $false
 $runStatus = "FAILED"
 $runExitCode = 1
 try {
@@ -100,7 +118,9 @@ try {
     $AgentKeyCacheFile = Join-Path $InstallDir ".giip_logcollector_agentkey"
     $agentKey = Resolve-AgentKey -Config $Config -CacheFile $AgentKeyCacheFile
     $runIdKey = Get-Date -Format 'yyyyMMddHHmmssfff'
-    Invoke-SchedulerAgentRunStart -Config $Config -AgentKey $agentKey -RunIdKey $runIdKey | Out-Null
+    # StateDir 은 AgentKeyCacheFile 과 같은 InstallDir 을 쓴다(git-auto-sync.ps1 의
+    # 체크아웃 갱신에 영향받지 않는 위치).
+    $runStartOk = Invoke-SchedulerAgentRunStart -Config $Config -AgentKey $agentKey -RunIdKey $runIdKey -StateDir $InstallDir
 } catch {
     Write-GiipLog "WARN" "giip #2390: SchedulerAgentRun bootstrap/start failed (non-fatal): $($_.Exception.Message)"
 }
@@ -168,7 +188,10 @@ try {
     # giip #2390: 실행 결과(성공 exit 0 / catch로 잡힌 실패)를 그대로
     # tSchedulerAgentRun에 기록한다. 위 bootstrap 블록이 실패해 agentKey/runIdKey를
     # 못 구했으면(non-fatal, 이미 WARN 로깅됨) 여기서도 조용히 건너뛴다.
-    if ($agentKey -and $runIdKey) {
+    # giip #2470: RunStart 가 실패/스킵됐으면 RunEnd 도 부르지 않는다. 짝이 없는
+    # RunEnd 는 어차피 같은 404 로 실패하면서 서버 에러 로그만 두 배로 만든다
+    # (실측: 576건 = RunStart 288 + RunEnd 288).
+    if ($agentKey -and $runIdKey -and $runStartOk) {
         try {
             Invoke-SchedulerAgentRunEnd -Config $Config -AgentKey $agentKey -RunIdKey $runIdKey -Status $runStatus -ExitCode $runExitCode | Out-Null
         } catch {

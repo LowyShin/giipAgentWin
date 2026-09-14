@@ -85,6 +85,7 @@ $InstallDir = Split-Path -Path $RepoRoot -Parent                      # cfg/agen
 $Global:BaseDir = $RepoRoot
 
 . (Join-Path $ScriptDir "Common.ps1")   # Get-GiipConfig / Write-GiipLog / Invoke-GiipApiV2
+. (Join-Path $ScriptDir "SchedulerAgentRegister.ps1")   # giip #2470: Invoke-SchedulerAgentUpsert(정본)
 
 $StateDir          = Join-Path $RepoRoot "logs\.collector_state"
 $QueueDir           = Join-Path $StateDir "queue"
@@ -456,82 +457,20 @@ function Send-LogIngestBatch {
 
 # ============================================================================
 # tSchedulerAgent 부트스트랩 (giip #1637에서 발견/보강한 갭)
-# giipApiSk2 범용 SP 디스패처를 통해 pApiSchedulerAgentUpsertBySK를 호출한다.
-# 이 디스패처의 CommandText 관례는 "<SP베이스이름> <jsonKey1> <jsonKey2> ..."이며,
-# 각 토큰은 JsonData 객체의 프로퍼티 이름과 문자열 매칭되어 값으로 치환된 뒤
-# "EXEC pApi<이름>BySk '<sk>', <val1>, <val2>, ..." 형태로 순서대로(위치기반) 실행된다
-# (giipfaw/giipApiSk2/run.ps1 참고, 기존 호출부 예시: lib/Kvs.ps1의
-# "KVSPut kType kKey kFactor kValue", giipscripts/azure-cost-put-win.ps1의
-# "KVSFactorLast kType kKey kFactor"). 위치기반이라 중간 파라미터를 건너뛸 수 없고,
-# 이 디스패처로는 SQL NULL 리터럴을 안전하게 넘길 방법이 없다(빈 토큰이 문자열
-# "NULL"로 치환되어 타입 변환 에러를 유발할 수 있음) - 그래서 NOT NULL인
-# agentKey/displayName 두 파라미터만 넘기고 나머지(hostIdentifier/osType/...)는
-# 이번 스코프에서 채우지 않는다(전부 SP 기본값 NULL로 남음, 이후 단계에서 별도
-# heartbeat 경로가 생기면 보강 가능).
+#
+# giip #2470: 구현 본체를 lib/SchedulerAgentRegister.ps1 의
+# Invoke-SchedulerAgentUpsert 로 옮겼다. 이 함수는 기존 호출부(아래
+# Invoke-LogCollectorMain)를 깨지 않기 위한 얇은 위임 래퍼로만 남긴다.
+#
+# 왜 옮겼나: 이 부트스트랩이 LogCollector.ps1 안에만 있었던 탓에,
+# LogCollector 를 돌리지 않는 호스트에서는 tSchedulerAgent 행이 영영 생기지
+# 않았고, giipAgent3.ps1(giip #2390)이 5분마다 보내는 RunStart/RunEnd 가 전부
+# "404|Agent not found" 로 실패했다(LOWYDN01 실측 24시간 576건). 이제 등록
+# 로직이 giipAgent3.ps1 과 LogCollector.ps1 양쪽에서 같은 정본을 공유한다.
 # ============================================================================
 function Invoke-SchedulerAgentBootstrap {
     param($Config, [string]$AgentKey)
-    $displayName = "giipAgentWin-$env:COMPUTERNAME"
-
-    # giip #2390: lssn/osType/agentType 보강.
-    #
-    # ⚠️ 위치기반 디스패처 주의(giipfaw/giipApiSk2/run.ps1 직접 확인): 이 SP 호출은
-    # "EXEC pApiSchedulerAgentUpsertBySK '<sk>', <v1>, <v2>, ..." 형태의 이름 없는
-    # (unnamed) 위치기반 호출로 조립된다. T-SQL의 unnamed EXEC는 중간 파라미터를
-    # 건너뛸 수 없으므로, SP 선언 순서(@agentKey, @displayName, @hostIdentifier,
-    # @windowsTaskName, @projectName, @scheduleDesc, @isActive, @lssn, @osType,
-    # @agentType, ...)상 lssn/osType/agentType보다 앞선 hostIdentifier/
-    # windowsTaskName/projectName/scheduleDesc/isActive를 전부 채워야만 실제로
-    # lssn/osType/agentType 위치에 값이 들어간다 - 안 채우고 토큰만
-    # "agentKey displayName lssn osType agentType"로 이어붙이면 lssn 값이
-    # hostIdentifier 자리로, osType이 windowsTaskName 자리로 밀려 들어가는 식으로
-    # 완전히 엉뚱한 컬럼을 덮어쓴다(코드 확인 중 실측 발견, 겉보기엔 200 OK를
-    # 반환해 눈치채기 어려움). 다행히 hostIdentifier(호스트명)/windowsTaskName
-    # (TaskSchdReg.ps1이 등록하는 실제 Task 이름)/projectName은 이 참에 채울 만한
-    # 실제 값이 있어 NULL 유지 문제를 우회한다(매 실행마다 동일 값 upsert,
-    # idempotent).
-    $values = [ordered]@{
-        agentKey        = $AgentKey
-        displayName     = $displayName
-        hostIdentifier  = $env:COMPUTERNAME
-        windowsTaskName = "GIIP Agent Task (v3)"
-        projectName     = "giipAgentWin"
-        scheduleDesc    = "Windows Task Scheduler, giipAgent3.ps1, 5-minute trigger"
-        isActive        = 1
-    }
-
-    $lssnVal = $null
-    if ($Config -and $Config['lssn']) {
-        $parsed = 0
-        if ([int]::TryParse([string]$Config['lssn'], [ref]$parsed) -and $parsed -gt 0) { $lssnVal = $parsed }
-    }
-    if ($null -ne $lssnVal) {
-        $values['lssn']      = $lssnVal
-        $values['osType']    = "Windows"
-        $values['agentType'] = "giipAgentWin"
-    } else {
-        Write-CollectorLog "WARN" "SchedulerAgentUpsert bootstrap: Config.lssn missing/invalid ('$($Config['lssn'])') - skipping lssn/osType/agentType this run."
-    }
-
-    # jsonData 프로퍼티 치환 대신 값을 CommandText에 직접 SQL 리터럴로 박아
-    # 넣는다(ConvertTo-DispatcherSqlLiteral, lib/Common.ps1 참고 - dispatcher의
-    # jsonData 자동추가(ISN 161) 함정을 피하려는 것). JsonData는 그래서 빈
-    # 문자열로 보낸다.
-    $literals = $values.Values | ForEach-Object { ConvertTo-DispatcherSqlLiteral $_ }
-    $commandText = "SchedulerAgentUpsert " + ($literals -join ' ')
-    try {
-        $resp = Invoke-GiipApiV2 -Config $Config -CommandText $commandText -JsonData ""
-        if ($resp -and (("$($resp.RstVal)") -eq "200")) {
-            Write-CollectorLog "INFO" "SchedulerAgentUpsert bootstrap OK agentKey=$AgentKey lssn=$lssnVal"
-            return $true
-        }
-        $respDump = if ($resp) { ($resp | ConvertTo-Json -Compress -ErrorAction SilentlyContinue) } else { "<null>" }
-        Write-CollectorLog "WARN" "SchedulerAgentUpsert bootstrap non-200 resp=$respDump"
-        return $false
-    } catch {
-        Write-CollectorLog "WARN" "SchedulerAgentUpsert bootstrap failed: $($_.Exception.Message)"
-        return $false
-    }
+    return (Invoke-SchedulerAgentUpsert -Config $Config -AgentKey $AgentKey)
 }
 
 # ============================================================================
