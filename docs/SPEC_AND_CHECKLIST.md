@@ -2,6 +2,12 @@
 
 giipAgent의 핵심 기능 리스트 및 기술적 상세 사양입니다.
 
+> **현재 호출되지 않는 경로 5개**(`giipAgentWin.ps1`, `lib/Worker.ps1`, `lib/Cqe.ps1`,
+> `scripts/NormalMode.ps1`, `lib/Discovery.ps1`)의 용도·처리·저장위치·소비처와,
+> 왜 만들어졌고 언제부터 왜 안 쓰이게 됐는지는
+> **[`docs/SPEC_UNCALLED_PATHS.md`](./SPEC_UNCALLED_PATHS.md)** 에 있습니다(giip #2556).
+> 그 문서에는 도달 불가 상태로 숨어 있던 결함 7건과 수정 내역도 함께 기록돼 있습니다.
+
 ## 1. 코어 에이전트 및 오케스트레이션
 - **Main Entry Point**: `giipAgent3.ps1`
   - 에이전트 실행의 주 진입점. 라이브러리 로드 및 각 모듈(`CleanState`, `CqeGet`, `CqeRun`, `DbMonitor`, `ProcessList` ...)을 순차적으로 실행.
