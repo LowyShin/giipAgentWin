@@ -31,6 +31,9 @@
 #   powershell -File lib\LogCollector.ps1 -Once       # 배치 루프 없이 단발 1회 수집/전송
 #   powershell -File lib\LogCollector.ps1 -Register   # "GIIP Log Collector Task"를
 #                                                       #  1분 간격 Scheduled Task로 등록하고 종료
+#   powershell -File lib\LogCollector.ps1 -SeedFromEnd # 현재 매칭되는 파일을 등록만 하고
+#                                                       #  offset을 파일 끝으로 맞춘 뒤 종료
+#                                                       #  (과거 로그 백필 없이 "지금부터" 수집)
 #
 # 설계상 giipAgentLinux(v1)와 다른 점 (giip #1637 스코프 판단, 의도적):
 #   - fileFingerprint: Linux는 inode(`stat -c '%i'`)를 쓰지만 Windows(NTFS)는
@@ -71,7 +74,13 @@
 [CmdletBinding()]
 param(
     [switch]$Once,
-    [switch]$Register
+    [switch]$Register,
+    # giip #2554: 첫 기동 백필 방지. 새 스트림은 offset 0부터 시작하므로, 이미 로그가
+    # 쌓여 있는 호스트에 수집기를 켜면 첫 tick에 과거 로그 전체가 인입된다(lowy-dp01
+    # 실측: giipLogs\giipAgentWin_*.log 13개 합계 26MB - 2026-03월 로그까지 포함).
+    # 이 스위치는 "현재 매칭되는 파일들을 등록만 하고 offset을 파일 끝으로 맞춘 뒤 종료"
+    # 한다(전송 없음). 예약작업 등록 전에 1회 실행하는 용도다.
+    [switch]$SeedFromEnd
 )
 
 $ErrorActionPreference = "Stop"
@@ -636,6 +645,54 @@ function Invoke-ProcessLogFile {
 }
 
 # ============================================================================
+# 시드(-SeedFromEnd): 등록만 하고 offset을 파일 끝으로 맞춘다 (giip #2554)
+#
+# 왜 필요한가: 새 스트림은 state 파일이 없어 offset 0부터 시작한다. 로그가 이미 쌓여
+# 있는 호스트에서 수집기를 처음 켜면 첫 tick에 과거 로그 전체가 인입된다(lowy-dp01
+# 실측: 26MB). tAgentLogEntry는 14일 보관이라 결국 지워지지만, 그 사이 DB와 전송
+# 대역을 무의미하게 소모하고 Log Viewer 화면도 몇 달 전 로그로 뒤덮인다.
+#
+# 이미 state가 있는 스트림은 건드리지 않는다(멱등) - 이미 수집 중인 스트림의 offset을
+# 끝으로 밀어 버리면 아직 안 보낸 줄을 영구히 잃는다.
+# ============================================================================
+function Invoke-SeedLogFileFromEnd {
+    param(
+        $Config, [string]$AgentApiBase, [string]$FunctionKey, [string]$AgentKey,
+        [string]$RepoRoot, [string]$StateDir, [string]$StreamTypeMap, [string]$FilePath
+    )
+
+    $streamType = Get-StreamType -FilePath $FilePath -Map $StreamTypeMap
+    $relPath    = Get-RelativeStreamPath -FilePath $FilePath -RepoRoot $RepoRoot
+    $streamKey  = "${streamType}:${relPath}"
+    $stateFile  = Get-StreamStateFile -StateDir $StateDir -StreamKey $streamKey
+    $state      = Get-StreamState -StateFile $stateFile
+
+    if (-not $state.IsNew) {
+        Write-CollectorLog "INFO" "seed skip (state already exists, left untouched) stream=$streamKey offset=$($state.Offset)"
+        return
+    }
+
+    $currentFp = Get-FileFingerprint -FilePath $FilePath
+    $item = Get-Item -Path $FilePath -ErrorAction SilentlyContinue
+    if (-not $item -or -not $currentFp) {
+        Write-CollectorLog "WARN" "seed: stat failed - skipping $FilePath"
+        return
+    }
+
+    $ok = Register-LogStream -Config $Config -AgentApiBase $AgentApiBase -FunctionKey $FunctionKey `
+            -AgentKey $AgentKey -StreamKey $streamKey -StreamType $streamType `
+            -FileFingerprint $currentFp -RotationGen 0
+    if (-not $ok) {
+        # 등록 실패 시 state를 쓰지 않는다 - 그래야 다음 시도에서 다시 처리된다.
+        Write-CollectorLog "WARN" "seed: register failed - state not written (will retry next run) stream=$streamKey"
+        return
+    }
+
+    Save-StreamState -StateFile $stateFile -Offset $item.Length -RotationGen 0 -Fingerprint $currentFp -LastSequence 0
+    Write-CollectorLog "INFO" "seed OK stream=$streamKey offset=$($item.Length) (only lines appended after this point will be collected)"
+}
+
+# ============================================================================
 # 동시실행 방지 (Linux의 ps aux self-count 체크에 대응하는 lock 파일 + PID 생존확인)
 # ============================================================================
 function Test-SelfRunLock {
@@ -680,7 +737,7 @@ function Test-LogCollectorEnabled {
 # Main
 # ============================================================================
 function Invoke-LogCollectorRun {
-    param([switch]$OnceMode)
+    param([switch]$OnceMode, [switch]$SeedMode)
 
     $Config = Get-GiipConfig
 
@@ -720,6 +777,17 @@ function Invoke-LogCollectorRun {
         $bootstrapped = Invoke-SchedulerAgentBootstrap -Config $Config -AgentKey $agentKey
         if (-not $bootstrapped) {
             Write-CollectorLog "WARN" "tSchedulerAgent bootstrap failed - stream register/ingest will likely 404 until this succeeds. Continuing this pass anyway (idempotent retry next tick)."
+        }
+
+        if ($SeedMode) {
+            $seedFiles = Get-DiscoveredFiles -Globs $globs
+            Write-CollectorLog "INFO" "=== LogCollector: seed-from-end start ($($seedFiles.Count) file(s)) ==="
+            foreach ($sf in $seedFiles) {
+                Invoke-SeedLogFileFromEnd -Config $Config -AgentApiBase $agentApiBase -FunctionKey $functionKey `
+                    -AgentKey $agentKey -RepoRoot $RepoRoot -StateDir $StateDir -StreamTypeMap $streamTypeMap -FilePath $sf
+            }
+            Write-CollectorLog "INFO" "=== LogCollector: seed-from-end done (no log lines sent) ==="
+            return
         }
 
         $runOnePass = {
@@ -770,5 +838,5 @@ if ($Register) {
 
 # 직접 실행될 때만 Run 호출 - dot-source해서 개별 함수 단위 테스트 가능하게 함
 if ($MyInvocation.InvocationName -ne '.') {
-    Invoke-LogCollectorRun -OnceMode:$Once
+    Invoke-LogCollectorRun -OnceMode:$Once -SeedMode:$SeedFromEnd
 }

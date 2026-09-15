@@ -71,9 +71,24 @@ branch = "real"
 # 'logcollector_enabled'이 1/true/yes 가 아니면 스크립트는 아무 것도 하지 않고
 # 조용히 종료한다(기존 설치를 깨지 않기 위함) - 즉 이 섹션 전체를 생략해도 안전하다.
 #
-# 인증은 위의 'sk'(서버별 secret key)를 그대로 재사용한다(x-api-key 헤더).
+# 인증은 **두 겹**이다(giip #2554 에서 실측 확인).
+#   1) 위의 'sk'(서버별 secret key)를 x-api-key 헤더로 보낸다 - 이건 giip 애플리케이션
+#      레벨 인증이다.
+#   2) 그 **이전에** Azure Functions 플랫폼 레벨 인증을 통과해야 한다. agent-log-* 4종은
+#      function.json 이 authLevel="function" 이라, 아래 agentfunctionkey 가 없으면
+#      플랫폼이 **빈 body 로 401** 을 돌려주고 우리 코드에는 도달조차 하지 않는다.
+#      (본문이 JSON 인 401 = 우리 코드의 인증 실패, 본문이 빈 401 = 플랫폼 거부.
+#       이 둘을 구분해야 원인 진단이 갈린다.)
+#   => 즉 sk 만 설정하면 수집기는 조용히 전부 실패한다. agentfunctionkey 는 사실상 필수다.
 #
 # logcollector_enabled = "1"
+#
+# 첫 기동 시 주의(giip #2554):
+#   새 스트림은 offset 0 부터 시작하므로, 이미 쌓여 있던 로그 파일이 크면 첫 tick 에
+#   과거 로그 전체가 인입된다. "지금부터만" 수집하려면 예약작업 등록 전에 한 번
+#       powershell -File lib\LogCollector.ps1 -SeedFromEnd
+#   를 실행한다 - 현재 매칭되는 파일들을 등록만 하고 offset 을 파일 끝으로 맞춘 뒤
+#   종료한다(로그 전송 없음).
 
 # (선택) 콤마 구분 경로 패턴 목록. 기본값은 giipAgentWin 자신의 운영 로그 디렉토리
 # 전체: "<repo>\logs\*.log" (git-auto-sync.ps1이 쓰는 git_auto_sync_*.log 등을
@@ -110,6 +125,15 @@ branch = "real"
 # (예: https://giipfaw.azurewebsites.net/api/giipApiSk2 -> https://giipfaw.azurewebsites.net/api)
 # agentapibase = "https://giipfaw.azurewebsites.net/api"
 
-# (선택) 위 Function들이 authLevel=function 이라 Azure Functions key가 필요한
-# 경우에만 설정(x-functions-key 헤더 + ?code= 쿼리 둘 다 시도됨).
+# **사실상 필수** - agent-log-* 4종은 function.json 이 authLevel="function" 이므로
+# 이 키가 없으면 Azure Functions 플랫폼이 빈 body 401 로 거부한다(우리 코드 미도달).
+# x-functions-key 헤더 + ?code= 쿼리 양쪽에 붙는다.
+#
+# 키를 어디서 가져오나 (giip 운영 환경 기준, giip #2554 에서 확인):
+#   Azure Portal > Function App "giipfaw" (리소스그룹 giipsvc)
+#     > 함수 앱 설정 > 앱 키 > 호스트 키 "default"
+#   또는 az CLI:  az functionapp keys list -g giipsvc -n giipfaw
+#
+# ⚠️ 이 파일(giipAgent.cfg)은 반드시 git 밖에 둔다. 이 값을 git-tracked 파일이나
+#    커밋 메시지/PR 본문/이슈 코멘트에 절대 적지 말 것.
 # agentfunctionkey = "<azure functions key>"
