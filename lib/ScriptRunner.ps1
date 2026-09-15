@@ -69,6 +69,36 @@ function Get-GiipOemEncoding {
     return $null
 }
 
+# giip #2546: script_type 정규화.
+#
+# CQEQueueGet 이 돌려주는 script_type 은 tMgmtQue.script_type 이고, 그 값은
+# pCQEForcebyUsn 이 **tMgmtScript.msType 을 그대로 복사**한 것이다(큐 등록 화면에서
+# 고른 tMgmtScriptList.script_type 이 아니다). msType 은 사용자가 화면에서 자유
+# 입력하는 varchar(5) 라서 실제 운영 데이터에 아래 같은 변형이 섞여 있다
+# (2026-09-15 lssn=71197 실측):
+#   - '.ps1'  (앞에 점)        <- mslsn 8039 가 이 값이라 실행 거부됨
+#   - 'bat'                     <- mslsn 8043
+#   - ''(빈 값)                 <- mslsn 8017
+# 따라서 엄격히 매칭하지 말고 여기서 한 번 정규화한다.
+function ConvertTo-GiipScriptType {
+    param([string]$RawType)
+
+    $t = "$RawType".Trim().ToLower().TrimStart('.')
+    if (-not $t) { return 'ps1' }   # 빈 값은 Windows 기본값 ps1
+
+    switch ($t) {
+        'powershell' { return 'ps1' }
+        'pwsh'       { return 'ps1' }
+        'bat'        { return 'cmd' }
+        'batch'      { return 'cmd' }
+        'cmdwin'     { return 'cmd' }
+        # 'vbs' 는 일부러 매핑하지 않는다 - .vbs 본문과 .wsf(XML 래퍼)는 형식이
+        # 달라 확장자만 바꿔 실행할 수 없다. 모르는 값은 그대로 돌려보내고
+        # 호출자(CqeRun)가 "지원하지 않는 script_type" 으로 기록하게 둔다.
+        default      { return $t }
+    }
+}
+
 # 타입 -> 임시파일 확장자 / 인터프리터 / 실행 모드 / 인코딩 매핑.
 function Get-GiipScriptTypeInfo {
     param([string]$Type)

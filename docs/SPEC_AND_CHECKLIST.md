@@ -31,6 +31,7 @@ giipAgent의 핵심 기능 리스트 및 기술적 상세 사양입니다.
     | `cmdui` | `cmd.exe`, **보이는 콘솔 창**(`/k`) | 없음(fire-and-forget) | X |
   - `ui` 계열(`ps1ui`/`cmdui`)은 `claude` 같은 **대화형 TUI** 를 띄우기 위한 타입이다. stdout 을 리다이렉트하면 자식의 stdin 이 TTY 가 아니게 되어 그런 도구가 즉시 죽으므로(실측: `Error: Input contained only whitespace ...`), 출력 캡처와 창 표시는 양립할 수 없다. 따라서 실행 이력에는 **"프로세스 기동 성공/실패"만** 기록된다.
   - `ui` 계열은 Task Scheduler 작업이 **LogonType=Interactive(사용자 세션)** 로 돌 때만 창이 실제로 보인다.
+  - **`script_type` 정규화**: `CQEQueueGet` 이 돌려주는 값은 `tMgmtQue.script_type` 이고, 그것은 `pCQEForcebyUsn` 이 **`tMgmtScript.msType` 을 그대로 복사**한 것이다(큐 등록 화면에서 고른 `tMgmtScriptList.script_type` 이 아니다). `msType` 은 자유 입력 `varchar(5)` 라 실운영 데이터에 `.ps1`(앞에 점) / `bat` / 빈 값이 섞여 있다(2026-09-15 lssn=71197 실측). 따라서 소문자화 + 앞의 점 제거 + 별칭 매핑(`powershell`/`pwsh`→`ps1`, `bat`/`batch`/`cmdwin`→`cmd`, 빈 값→`ps1`)을 거쳐 실행한다.
 - **실행기 라이브러리**: `lib/ScriptRunner.ps1` (`Invoke-ScriptBlock`), 실행 이력: `lib/ExecutionLog.ps1` (`Save-ExecutionLog`)
   - 실행 이력은 KVS `kFactor='giipagent'` 에 `{"event_type":"script_execution","details":{"script_type","exit_code","execution_time_seconds","mslsn","mssn","mode","success","output"}}` 형태로 남는다(Linux 에이전트 `lib/kvs.sh` `save_execution_log()` 와 동일 의미론).
   - giipv3 `cqelsvrRunList` 화면의 **[KVS]** 버튼이 `/{locale}/kvslist?kKey=<lssn>&kFactor=giipagent&mslsn=<mslsn>` 로 이동하므로, 이 형식이어야 화면에서 실행 결과가 보인다(giip-967).
