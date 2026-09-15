@@ -169,6 +169,66 @@ function Get-GiipConfig {
     return $config
 }
 
+# ============================================================================
+# giip #2556: 아래 두 함수(Get-SystemInfo / Update-ConfigLssn)는 이 파일에
+# 원래 있었으나(1558e27, 2025-12-08 "refactor: Modularize Windows Agent to v2.0
+# structure"), 2026-04-08 커밋 95a5560("feat: implement modular agent task
+# execution framework with new library and script modules")이 lib/Common.ps1 을
+# 전면 재작성하면서 **정의만 사라지고 호출부는 그대로 남았다**.
+#
+# 호출부: lib/Worker.ps1 L34(Get-SystemInfo), L121(Update-ConfigLssn).
+# 그 결과 구 진입점 giipAgentWin.ps1 은 2026-04-08 이후 루프 첫 회차에서
+# 반드시 CommandNotFoundException 으로 죽는 상태였다(giip #2556 실측 재현:
+#   "The term 'Get-SystemInfo' is not recognized as the name of a cmdlet,
+#    function, script file, or operable program.").
+# Task Scheduler 가 그 진입점을 부르지 않게 된 뒤(b69abcd, 2025-12-11)라
+# 아무도 이 결함을 만나지 않았을 뿐이다.
+#
+# 여기서 1558e27 의 원본 정의를 그대로 복원한다. 레포 전체에서 이 두 이름의
+# 정의는 0건이었으므로(실측) 이름 충돌이 없고, 운영 경로(giipAgent3.ps1 Step
+# 1~7 + Step 2.5)는 이 함수들을 호출하지 않으므로 동작 변화가 없다.
+# 상세 사양: docs/SPEC_UNCALLED_PATHS.md
+# ============================================================================
+
+# Function: 호스트명/OS 이름 조회 (lib/Worker.ps1 Get-QueueItem 이 사용)
+function Get-SystemInfo {
+    try {
+        $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+        return @{
+            Hostname = $os.CSName
+            OSName   = $os.Caption
+        }
+    }
+    catch {
+        return @{
+            Hostname = $env:COMPUTERNAME
+            OSName   = "Windows (Unknown)"
+        }
+    }
+}
+
+# Function: giipAgent.cfg 의 lssn 값을 갱신 (lib/Worker.ps1 Invoke-AgentTask 가
+#           서버에서 숫자 LSSN 을 돌려받았을 때 사용)
+function Update-ConfigLssn {
+    param([string]$NewLssn)
+    # Re-find the config file to update it
+    $candidates = @()
+    if ($Global:BaseDir) { $candidates += (Join-Path $Global:BaseDir "../giipAgent.cfg") }
+    $candidates += (Join-Path $env:USERPROFILE "giipAgent.cfg")
+
+    $targetFile = $null
+    foreach ($path in $candidates) {
+        if (Test-Path $path) { $targetFile = $path; break }
+    }
+
+    if ($targetFile) {
+        $content = Get-Content $targetFile
+        $newContent = $content -replace 'lssn\s*=\s*"\d+"', "lssn = `"$NewLssn`"" -replace "lssn\s*=\s*'\d+'", "lssn = `"$NewLssn`""
+        Set-Content -Path $targetFile -Value $newContent -Encoding UTF8
+        Write-GiipLog "INFO" "Updated LSSN in config file to $NewLssn"
+    }
+}
+
 # Function: Import MySQL Connector DLL
 function Import-MySqlDll {
     param([string]$LibDir)
