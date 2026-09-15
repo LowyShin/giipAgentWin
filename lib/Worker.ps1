@@ -1,7 +1,31 @@
 # ============================================================================
 # giipAgentWin Library: Worker Functions
 # Purpose: Queue Processing, Task Execution, and Result Reporting
+#
+# ⚠️ giip #2546 - 이 파일 전체가 현재 **죽은 경로**다.
+#    유일한 호출자는 구 진입점 giipAgentWin.ps1 의 무한루프인데, Task Scheduler
+#    에 등록된 작업은 'GIIP Agent Task (v3)' 하나뿐이고 그 액션은
+#    giipAgent3.ps1 이다(실측: 상주 프로세스 0건). lib/Cqe.ps1 의 Get-Queue,
+#    scripts/NormalMode.ps1, lib/Discovery.ps1 도 같은 이유로 도달 불가다.
+#    운영 경로는 giipAgent3.ps1 -> giipscripts\modules\CqeGet.ps1 ->
+#    giipscripts\modules\CqeRun.ps1 이다.
+#
+#    실제 실행 로직(Invoke-ScriptBlock)은 CqeRun.ps1 이 재사용할 수 있도록
+#    lib\ScriptRunner.ps1 로 옮겼다. 이 파일은 그것을 dot-source 하므로 구
+#    경로의 동작(giipAgentWin.ps1 을 수동으로 띄우는 경우)은 변하지 않는다.
+#
+#    이 파일 / lib\Cqe.ps1 / giipAgentWin.ps1 / scripts\NormalMode.ps1 /
+#    lib\Discovery.ps1 은 **정리(삭제) 후보**다. 다만 이번 이슈 범위에서는
+#    지우지 않고 후속 이슈로 올린다(운영 중인 에이전트 경로를 고치는 변경과
+#    삭제를 한 PR 에 섞지 않기 위함).
 # ============================================================================
+
+# giip #2546: 실행기는 lib\ScriptRunner.ps1 로 분리됐다(CqeRun.ps1 과 공유).
+if (-not (Get-Command Invoke-ScriptBlock -ErrorAction SilentlyContinue)) {
+    $__workerScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
+    $__workerRunnerPath = Join-Path $__workerScriptDir "ScriptRunner.ps1"
+    if (Test-Path $__workerRunnerPath) { . $__workerRunnerPath }
+}
 
 #region ====== Queue Logic ======
 function Get-QueueItem {
@@ -35,6 +59,13 @@ function Get-QueueItem {
     return $response
 }
 
+# ⚠️ giip #2546: 이 함수는 kFactor='giipAgentLog' 로 KVS 에 쓴다. 그런데 giipv3
+#    어느 화면도 그 kFactor 를 읽지 않는다(실측: cqelsvrRunList 의 [KVS] 버튼은
+#    /kvslist?kKey=<lssn>&kFactor=giipagent&mslsn=<mslsn> 로 이동하고, kvslist 는
+#    kValue.details.mslsn 으로 필터링한다 - giip-967).
+#    따라서 CQE 실행 이력의 **정본은 lib\ExecutionLog.ps1 의 Save-ExecutionLog**
+#    (kFactor='giipagent', Linux lib/kvs.sh save_execution_log 와 동일 의미론)이며,
+#    이 함수는 죽은 경로에 남은 레거시다. 새 코드에서 쓰지 말 것.
 function Report-TaskResult {
     param(
         [hashtable]$Config,
@@ -116,74 +147,10 @@ function Invoke-AgentTask {
     Report-TaskResult -Config $Config -Qsn $qsn -Status $status -Output $execResult.Output
 }
 
-function Invoke-ScriptBlock {
-    param(
-        [ValidateSet('wsf', 'ps1', 'cmd')] [string]$Type,
-        [string]$Body
-    )
-
-    $TempDir = [System.IO.Path]::GetTempPath()
-    $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
-    $filename = "giip_task_${timestamp}_$((Get-Random))"
-    
-    $ext = switch ($Type) {
-        'wsf' { '.wsf' }
-        'ps1' { '.ps1' }
-        default { '.cmd' }
-    }
-    
-    $tempFile = Join-Path $TempDir ($filename + $ext)
-    
-    try {
-        # UTF8 No BOM for best compat
-        [System.IO.File]::WriteAllText($tempFile, $Body, [System.Text.UTF8Encoding]::new($false))
-
-        $cmdArgs = switch ($Type) {
-            'wsf' { "//B //Nologo `"$tempFile`"" }
-            'ps1' { "-NoProfile -ExecutionPolicy Bypass -File `"$tempFile`"" }
-            default { "/c `"$tempFile`"" }
-        }
-        
-        $exe = switch ($Type) {
-            'wsf' { "wscript.exe" }
-            'ps1' { "powershell.exe" }
-            default { "cmd.exe" }
-        }
-
-        # Run Process
-        $pInfo = New-Object System.Diagnostics.ProcessStartInfo
-        $pInfo.FileName = $exe
-        $pInfo.Arguments = $cmdArgs
-        $pInfo.RedirectStandardOutput = $true
-        $pInfo.RedirectStandardError = $true
-        $pInfo.UseShellExecute = $false
-        $pInfo.CreateNoWindow = $true
-
-        $p = New-Object System.Diagnostics.Process
-        $p.StartInfo = $pInfo
-        $p.Start() | Out-Null
-        
-        if ($p.WaitForExit(60000)) {
-            # 60s Timeout
-            $stdOut = $p.StandardOutput.ReadToEnd()
-            $stdErr = $p.StandardError.ReadToEnd()
-            return @{
-                Success = ($p.ExitCode -eq 0)
-                Output  = $stdOut + "`n" + $stdErr
-            }
-        }
-        else {
-            $p.Kill()
-            return @{ Success = $false; Output = "Timeout (60s)" }
-        }
-
-    }
-    catch {
-        return @{ Success = $false; Output = "Execution Error: $_" }
-    }
-    finally {
-        if (Test-Path $tempFile) { Remove-Item $tempFile -Force -ErrorAction SilentlyContinue }
-    }
-}
+# giip #2546: Invoke-ScriptBlock 은 lib\ScriptRunner.ps1 로 이동했다.
+#   - 60초 하드코딩 타임아웃 -> giipAgent.cfg 의 cqetimeoutsec(기본 600초)
+#   - stdout 비동기 읽기(파이프 버퍼 교착 제거)
+#   - script_type 'cmdui'/'ps1ui'(보이는 콘솔 창) 추가
+# 이 파일 상단에서 dot-source 하므로 아래 Invoke-AgentTask 의 호출부는 그대로다.
 #endregion
 

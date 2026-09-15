@@ -4,9 +4,11 @@ giipAgent의 핵심 기능 리스트 및 기술적 상세 사양입니다.
 
 ## 1. 코어 에이전트 및 오케스트레이션
 - **Main Entry Point**: `giipAgent3.ps1`
-  - 에이전트 실행의 주 진입점. 라이브러리 로드 및 각 모듈(`CleanState`, `CqeGet`, `DbMonitor`, `ProcessList`)을 순차적으로 실행.
+  - 에이전트 실행의 주 진입점. 라이브러리 로드 및 각 모듈(`CleanState`, `CqeGet`, `CqeRun`, `DbMonitor`, `ProcessList` ...)을 순차적으로 실행.
+  - 실행 순서: Step 1 `CleanState` → Step 2 `CqeGet` → **Step 2.5 `CqeRun`** → Step 3 `DbMonitor` → Step 4 `ProcessList` → Step 5 `DbConnectionList` → Step 6 `HostConnectionList` → Step 7 `CollectEnhancedMetrics`.
 - **상태 관리 (State Management)**: `giipscripts/modules/CleanState.ps1`
   - `data/` 디렉토리 내의 이전 실행 파일(`queue.json`, `task_result.json` 등) 삭제 및 7일 경과된 로그 정리.
+  - giip #2546: **내용이 있는 `queue.json`을 지우게 되면 WARN 로그**를 남긴다. 정상 흐름이라면 `CqeRun`이 같은 실행 안에서 이미 소비했어야 하므로, 이 WARN 은 "받아만 놓고 실행하지 않은 작업을 버리는 중"이라는 회귀 신호다.
 - **설정 로드 (Config Loader)**: `lib/Common.ps1` -> `Get-GiipConfig`
   - `giipAgent.cfg` 파일을 탐색 우선순위(Parent > UserProfile > Local)에 따라 파싱.
 - **API 통신**: `lib/Common.ps1` -> `Invoke-GiipApiV2`
@@ -14,7 +16,24 @@ giipAgent의 핵심 기능 리스트 및 기술적 상세 사양입니다.
 
 ## 2. 원격 명령 실행 (CQE 시스템)
 - **명령 수집 (CqeGet)**: `giipscripts/modules/CqeGet.ps1`
-  - `ManagedDatabaseListForAgent` 커맨드를 통해 실행 대기 중인 명령을 가져와 `data/queue.json`에 저장.
+  - `CQEQueueGet` 커맨드를 통해 실행 대기 중인 명령을 가져와 `data/queue.json`에 저장(`mslsn`/`mssn`/`script_type`/`ms_body`).
+- **명령 실행 (CqeRun)**: `giipscripts/modules/CqeRun.ps1` — giip #2546 에서 복원
+  - `data/queue.json`을 읽어 `ms_body`를 `script_type`에 맞는 임시 파일로 쓰고 실행한다.
+  - **실행 전에 `data/queue_last.json`으로 옮겨 같은 실행 안에서 큐를 소비한다.** 다음 회차 `CleanState`가 미실행 큐를 지워 유실시키는 창을 없애기 위함이다(이 버그가 몇 달간 조용했던 구조 자체를 제거).
+  - `{{sk}}` / `{{lssn}}` 플레이스홀더를 `giipAgent.cfg` 값으로 치환한다.
+  - 지원 `script_type`
+    | 값 | 실행 방식 | 타임아웃 | stdout 캡처 |
+    |---|---|---|---|
+    | `ps1` | `powershell.exe`, 창 없음 | `cqetimeoutsec`(기본 600초) | O |
+    | `cmd` | `cmd.exe`, 창 없음 | `cqetimeoutsec`(기본 600초) | O |
+    | `wsf` | `wscript.exe`, 창 없음 | `cqetimeoutsec`(기본 600초) | O |
+    | `ps1ui` | `powershell.exe`, **보이는 콘솔 창**(`-NoExit`) | 없음(fire-and-forget) | X |
+    | `cmdui` | `cmd.exe`, **보이는 콘솔 창**(`/k`) | 없음(fire-and-forget) | X |
+  - `ui` 계열(`ps1ui`/`cmdui`)은 `claude` 같은 **대화형 TUI** 를 띄우기 위한 타입이다. stdout 을 리다이렉트하면 자식의 stdin 이 TTY 가 아니게 되어 그런 도구가 즉시 죽으므로(실측: `Error: Input contained only whitespace ...`), 출력 캡처와 창 표시는 양립할 수 없다. 따라서 실행 이력에는 **"프로세스 기동 성공/실패"만** 기록된다.
+  - `ui` 계열은 Task Scheduler 작업이 **LogonType=Interactive(사용자 세션)** 로 돌 때만 창이 실제로 보인다.
+- **실행기 라이브러리**: `lib/ScriptRunner.ps1` (`Invoke-ScriptBlock`), 실행 이력: `lib/ExecutionLog.ps1` (`Save-ExecutionLog`)
+  - 실행 이력은 KVS `kFactor='giipagent'` 에 `{"event_type":"script_execution","details":{"script_type","exit_code","execution_time_seconds","mslsn","mssn","mode","success","output"}}` 형태로 남는다(Linux 에이전트 `lib/kvs.sh` `save_execution_log()` 와 동일 의미론).
+  - giipv3 `cqelsvrRunList` 화면의 **[KVS]** 버튼이 `/{locale}/kvslist?kKey=<lssn>&kFactor=giipagent&mslsn=<mslsn>` 로 이동하므로, 이 형식이어야 화면에서 실행 결과가 보인다(giip-967).
 - **자동 업데이트 (Auto-Sync)**: `git-auto-sync.ps1`
   - 설정된 브랜치(`real` 또는 `main`)로 Git Pull 수행.
 

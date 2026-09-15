@@ -140,6 +140,22 @@ try {
         & $cqeScript
     }
 
+    # 2.5 Cqe Run (Execute the queue CqeGet just fetched)
+    #
+    # giip #2546: 여기가 몇 달간 비어 있던 자리다. Step 2 가 data\queue.json 에
+    # 작업을 저장해 놓아도 실행하는 코드가 없었고, 다음 회차 Step 1(CleanState)이
+    # 그 파일을 조용히 지웠다. 반드시 Step 2 직후에, **같은 실행 안에서** 큐를
+    # 소비해야 유실 창이 생기지 않는다. 아래 Step 3~7 수집 순서는 그대로 둔다.
+    #
+    # CQE 작업이 실패해도(모듈이 exit 1) 수집 스텝은 계속 돌아야 하므로 여기서
+    # 예외를 만들지 않는다 - PowerShell 에서 '&' 로 부른 스크립트의 exit 코드는
+    # $LASTEXITCODE 에만 남고 호출자를 중단시키지 않는다(Step 2 도 동일 구조).
+    $cqeRunScript = Join-Path $ModuleDir "CqeRun.ps1"
+    if (Test-Path $cqeRunScript) {
+        Write-GiipLog "INFO" "[Step 2.5] Running Queue Task..."
+        & $cqeRunScript
+    }
+
     # 3. DB Monitor (Database Metrics)
     $dbMonitorScript = Join-Path $ModuleDir "DbMonitor.ps1"
     if (Test-Path $dbMonitorScript) {
