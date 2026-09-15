@@ -103,16 +103,37 @@ $AgentKeyCacheFile  = Join-Path $InstallDir ".giip_logcollector_agentkey"
 $LockFile           = Join-Path $StateDir ".logcollector.lock"
 
 # 수집기 자신의 진단 로그는 기본 수집 glob("<repo>\logs\*.log")과 겹치지 않도록
-# 하위 폴더에 둔다(자기참조 수집 루프 방지).
+# 하위 폴더에 둔다(자기참조 수집 루프 방지). "*.log" 는 이 하위폴더까지 내려가지 않는다
+# (Get-ChildItem -Path 패턴은 비재귀).
 $DiagLogDir  = Join-Path $RepoRoot "logs\collector_diag"
 $DiagLogFile = Join-Path $DiagLogDir ("giip-log-collector_{0}.log" -f (Get-Date -Format 'yyyyMMdd'))
 
+# giip #2554: 예전에는 여기서 Write-GiipLog 를 호출했다. 그런데 giip #2338 이후
+# Write-GiipLog 는 콘솔뿐 아니라 **giipLogs\giipAgentWin_YYYYMMDD.log 에도 append** 한다.
+# 그 파일이 logcollector_globs 의 수집 대상에 포함되면(= 에이전트 자신의 운영 로그를
+# 수집하는, 지극히 자연스러운 설정) 양의 피드백 루프가 생긴다:
+#
+#   패스 N   : 새 줄을 인입하고 "ingest OK ..." 1줄을 그 파일에 남긴다
+#   패스 N+1 : 방금 남긴 그 1줄을 새 줄로 발견해 인입하고, 또 1줄을 남긴다
+#   ...      : 2초 간격 루프 x 1분 예약작업 = 하루 수만 줄의 무의미한 로그가 영구히 적재
+#
+# (lowy-dp01 실측: -SeedFromEnd 실행 직후 그 실행이 남긴 2줄이 곧바로 수집 대상
+#  giipLogs\giipAgentWin_20260915.log 끝에 들어가 있었다.)
+#
+# 파일 상단 주석이 원래 의도했던 대로 - 수집기 자신의 진단 로그는 **수집 대상에서 제외된
+# 전용 위치(logs\collector_diag\)와 콘솔에만** 남긴다. 진단 정보는 하나도 잃지 않으면서
+# 자기참조 루프만 끊는다.
+#
+# 주의: 부트스트랩(lib\SchedulerAgentRegister.ps1 의 Invoke-SchedulerAgentUpsert)은 여전히
+# Write-GiipLog 를 쓰므로 실행당 1줄이 giipLogs 에 남는다. 그건 증폭되지 않는 상수이고
+# (수집 결과가 다시 giipLogs 에 기록되지 않으므로), 에이전트 운영 로그로서 정당한 내용이다.
 function Write-CollectorLog {
     param([string]$Level, [string]$Message)
-    Write-GiipLog $Level $Message
+    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    Write-Host "[$ts] [$Level] $Message"
     try {
         if (-not (Test-Path $DiagLogDir)) { New-Item -ItemType Directory -Path $DiagLogDir -Force | Out-Null }
-        $line = "[{0}] [{1}] {2}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Level, $Message
+        $line = "[{0}] [{1}] {2}" -f $ts, $Level, $Message
         Add-Content -Path $DiagLogFile -Value $line -Encoding UTF8
     } catch {}
 }

@@ -95,6 +95,14 @@ branch = "real"
 # 포함, gissue_csn*.log 같은 다른 제품(giip-fde-agent)의 로그는 하드코딩하지
 # 않는다 - 그런 도구가 같은 Box에 설치돼 있으면 아래처럼 opt-in으로 추가한다):
 # logcollector_globs = "C:\path\to\giipAgentWin\logs\*.log,C:\path\to\giip-fde-agent\logs\*.log"
+#
+# ⚠️ 자기참조 주의(giip #2554): 에이전트 자신의 운영 로그
+# (giipAgentWin 상위의 giipLogs\giipAgentWin_YYYYMMDD.log - lib\Common.ps1 의 Write-GiipLog 가
+# append 한다)를 수집 대상에 넣는 것은 정상적인 사용법이고 실제로 가장 쓸모 있는 대상이다.
+# 다만 그러려면 수집기 자신이 그 파일에 로그를 남기지 않아야 한다 - 남기면 "1줄 수집 ->
+# 1줄 기록 -> 그 1줄을 다시 수집"의 양의 피드백 루프가 생긴다. 그래서 Write-CollectorLog 는
+# giipLogs 가 아니라 전용 진단 파일(logs\collector_diag\)에만 기록한다.
+# 다른 로그를 추가할 때도 "그 파일에 이 수집기가 뭔가를 쓰는가?"를 먼저 확인할 것.
 
 # (선택) 파일 경로 패턴 -> streamType 명시적 매핑("pattern:streamType,pattern:streamType,...").
 # 매칭 안 되는 파일은 파일명 기반 휴리스틱(logs\ 하위는 agent_operational, 그 외는
