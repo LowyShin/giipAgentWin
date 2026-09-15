@@ -265,6 +265,54 @@ Invoke-FlushRetryQueue -Config $dummyConfig -AgentApiBase "https://example.inval
 $queuedAfterFlush = @(Get-ChildItem -Path $flushQueueDir -Filter "*.json.gz" -Recurse -File)
 Assert-Eq "queue drained after successful flush" 0 $queuedAfterFlush.Count
 
+# ------------------------------------------------------------------
+# 11) Invoke-SeedLogFileFromEnd (giip #2554)
+#     "지금부터 수집" 시드: 등록만 하고 offset을 파일 끝으로 맞춘다. 전송은 하지 않는다.
+# ------------------------------------------------------------------
+Write-Host "-- Invoke-SeedLogFileFromEnd (first-run backfill guard) --"
+$seedStateDir = Join-Path $Sandbox "seedstate"
+New-Item -ItemType Directory -Path $seedStateDir -Force | Out-Null
+
+$seedLogFile = Join-Path $Sandbox "logs\seed.log"
+[System.IO.File]::WriteAllText($seedLogFile, "old-1`nold-2`nold-3`n", [System.Text.Encoding]::UTF8)
+$seedSize = (Get-Item $seedLogFile).Length
+
+$script:MockRegisterCalls = 0
+$script:MockIngestCalls = 0
+
+Invoke-SeedLogFileFromEnd -Config $dummyConfig -AgentApiBase "https://example.invalid/api" -FunctionKey $null `
+    -AgentKey "test-agent" -RepoRoot $Sandbox -StateDir $seedStateDir -StreamTypeMap $null -FilePath $seedLogFile
+
+Assert-Eq "seed: registers the stream once" 1 $script:MockRegisterCalls
+Assert-Eq "seed: sends no log lines" 0 $script:MockIngestCalls
+
+$seedStateFile = Get-StreamStateFile -StateDir $seedStateDir -StreamKey "agent_operational:logs/seed.log"
+$seedState = Get-StreamState -StateFile $seedStateFile
+Assert-Eq "seed: offset == current file size (pre-existing content skipped)" $seedSize $seedState.Offset
+Assert-Eq "seed: rotationGen starts at 0" 0 $seedState.RotationGen
+Assert-Eq "seed: lastSequence starts at 0" 0 $seedState.LastSequence
+
+# 시드 이후 새로 추가된 줄만 수집돼야 한다.
+Add-Content -Path $seedLogFile -Value "new-after-seed" -Encoding UTF8
+$script:MockIngestCalls = 0
+$seedQueueDir = Join-Path $seedStateDir "queue"
+New-Item -ItemType Directory -Path $seedQueueDir -Force | Out-Null
+Invoke-ProcessLogFile -Config $dummyConfig -AgentApiBase "https://example.invalid/api" -FunctionKey $null -AgentKey "test-agent" `
+    -RepoRoot $Sandbox -StateDir $seedStateDir -QueueDir $seedQueueDir -StreamTypeMap $null `
+    -BatchMaxBytes 131072 -MaxReadBytes 4194304 -FilePath $seedLogFile
+$seedState2 = Get-StreamState -StateFile $seedStateFile
+Assert-Eq "only the line appended after seeding is collected (lastSequence=1)" 1 $seedState2.LastSequence
+Assert-Eq "one ingest call after seeding" 1 $script:MockIngestCalls
+
+# 멱등성: 이미 state가 있는 스트림은 다시 시드해도 손대지 않는다
+# (offset을 끝으로 밀어 버리면 아직 안 보낸 줄을 영구히 잃는다).
+$script:MockRegisterCalls = 0
+Invoke-SeedLogFileFromEnd -Config $dummyConfig -AgentApiBase "https://example.invalid/api" -FunctionKey $null `
+    -AgentKey "test-agent" -RepoRoot $Sandbox -StateDir $seedStateDir -StreamTypeMap $null -FilePath $seedLogFile
+Assert-Eq "existing state is left untouched (no re-register)" 0 $script:MockRegisterCalls
+$seedState3 = Get-StreamState -StateFile $seedStateFile
+Assert-Eq "re-seeding preserves lastSequence" 1 $seedState3.LastSequence
+
 } finally {
     Remove-Item -Path $Sandbox -Recurse -Force -ErrorAction SilentlyContinue
 }
