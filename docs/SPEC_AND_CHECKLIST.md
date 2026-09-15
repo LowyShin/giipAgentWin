@@ -35,6 +35,33 @@ giipAgent의 핵심 기능 리스트 및 기술적 상세 사양입니다.
 - **실행기 라이브러리**: `lib/ScriptRunner.ps1` (`Invoke-ScriptBlock`), 실행 이력: `lib/ExecutionLog.ps1` (`Save-ExecutionLog`)
   - 실행 이력은 KVS `kFactor='giipagent'` 에 `{"event_type":"script_execution","details":{"script_type","exit_code","execution_time_seconds","mslsn","mssn","mode","success","output"}}` 형태로 남는다(Linux 에이전트 `lib/kvs.sh` `save_execution_log()` 와 동일 의미론).
   - giipv3 `cqelsvrRunList` 화면의 **[KVS]** 버튼이 `/{locale}/kvslist?kKey=<lssn>&kFactor=giipagent&mslsn=<mslsn>` 로 이동하므로, 이 형식이어야 화면에서 실행 결과가 보인다(giip-967).
+- **스케줄 필드의 의미 (`tMgmtScriptList`)** — giip #2561
+  | 필드 | 의미 | 주의 |
+  |---|---|---|
+  | `active` | 큐 배급 대상 여부. `1` 이면 `CQEQueueGet` 이 이 lssn 의 활성 항목을 **로테이션으로 계속 배급**한다 | **on-demand(force-run) 전용 스크립트는 `active=0` 이어야 한다.** `1` 로 두면 영구 반복된다 |
+  | `interval` | `0` 은 **"주기 없음"이 아니라 "매 로테이션마다 재배급"** 이다 | 활성 큐 N건 × 5분 폴링 = 약 `N×5`분 주기로 재실행된다(실측: N=3 → 약 15분) |
+  | `repeat` | `1` 이면 1회 실행 후 비활성화되는 1회성 등록 | 검증용 임시 등록에 쓴다 |
+  | `script_type` | 큐 배급 시 실제로 쓰이는 값은 이 컬럼이 **아니라** `tMgmtScript.msType` 이다(위 "정규화" 항목) | 화면에서 고른 값과 실행 타입이 다를 수 있다 |
+
+  giip #2561 실측 사고: `mslSn=8039`(msSn=6096, `cleanup-stale-worktrees.cqe`)는 스크립트 본문 첫
+  줄이 스스로 `On-demand only (force-run)` 이라고 선언하는데 `active=1, interval=0` 으로 등록돼
+  있어, **파괴적인 worktree 정리가 약 15분마다 무인으로 반복 실행**되고 있었다.
+- **CQE 스크립트 본문 작성 규칙** — giip #2561
+  1. **본문을 `tMgmtScript.msBody` 에만 두지 않는다.** DB 안의 본문은 리뷰·이력·롤백이 불가능하고
+     레포의 규칙·테스트 어느 것에도 닿지 않는다. 정본은 git-tracked 파일에 두고 `msBody` 는 그
+     파일을 호출하는 **얇은 런처**로 만든다(정본 폴더: `lowyworkenv/scripts/cqe/`).
+  2. **`$ErrorActionPreference = 'Stop'` 상태에서 네이티브 exe 의 stderr 를 리다이렉트하지 않는다**
+     (`2>$null`, `2>&1` 모두 해당). CQE 의 `ps1` 은 `powershell.exe`(**Windows PowerShell 5.1**)로
+     실행되는데, 5.1 은 네이티브 exe 가 stderr 에 한 줄이라도 쓰면 **exe 의 종료코드가 0 이어도**
+     그 줄을 `NativeCommandError` `ErrorRecord` 로 감싸 던지고, `Stop` 과 만나면 종료성 오류가 된다.
+     실측(2026-09-15 19:45): `git branch -d ... 2>&1` 이 git 의 성공 경고(`warning: deleting
+     branch '...' that has been merged to`) 한 줄에 죽어 `exit_code=1` 로 끝났다. **PowerShell 7
+     에서 잘 돌던 스크립트를 그대로 붙이면 재발한다.** 정본 형태는 `Continue` + 호출 직후
+     `$LASTEXITCODE` 직접 검사다.
+  3. **stdout 에 한글을 의존하지 않는다.** CqeRun 은 자식 stdout 을 콘솔 코드페이지로 읽어 한글이
+     `?` 로 뭉개진다. 상태 라인은 ASCII 로 쓰고, 한국어 상세는 UTF-8 로그 파일에 남긴다.
+  4. 실행 이력에 실리는 `output` 은 **2000자에서 절단**된다(`CqeRun.ps1`). 중간 사망 여부는 출력
+     끝의 요약 마커 도달 여부로 판별할 수 있게 스크립트가 **마지막에 요약을 찍도록** 만든다.
 - **자동 업데이트 (Auto-Sync)**: `git-auto-sync.ps1`
   - 설정된 브랜치(`real` 또는 `main`)로 Git Pull 수행.
 
