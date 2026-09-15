@@ -4,6 +4,15 @@
 # Version: 1.00
 # Date: 2025-01-10
 # Purpose: CQE API wrapper functions for queue fetching
+#
+# ⚠️ giip #2546 - 이 파일의 Get-Queue 는 **호출자 없는 죽은 코드**다.
+#    유일한 호출자였던 scripts\NormalMode.ps1 역시 Task Scheduler 에 등록돼
+#    있지 않다(등록된 작업은 'GIIP Agent Task (v3)' = giipAgent3.ps1 하나뿐).
+#    운영 경로의 큐 조회는 giipscripts\modules\CqeGet.ps1 이, 실행은
+#    giipscripts\modules\CqeRun.ps1 이 담당한다.
+#    또한 Get-Queue 는 ms_body 만 돌려주므로 script_type/mslsn/mssn 을 잃어버려
+#    실행 이력 추적(giip-967)에도 쓸 수 없다.
+#    이 파일은 **정리(삭제) 후보**이며 후속 이슈로 올린다.
 # ============================================================================
 
 if (-not (Get-Command Invoke-GiipApiV2 -ErrorAction SilentlyContinue)) {
