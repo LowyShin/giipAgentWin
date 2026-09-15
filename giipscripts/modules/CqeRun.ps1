@@ -98,8 +98,11 @@ try {
 # ---------------------------------------------------------------------------
 # 3) 실행
 # ---------------------------------------------------------------------------
-$scriptType = "$($queue.script_type)".Trim().ToLower()
-if (-not $scriptType) { $scriptType = "ps1" }
+# giip #2546: CQEQueueGet 이 돌려주는 script_type 은 tMgmtScript.msType 사본이라
+# '.ps1'(앞에 점) / 'bat' / 빈 값 같은 변형이 실제로 섞여 있다(lssn=71197 실측).
+# 정규화는 lib\ScriptRunner.ps1 의 ConvertTo-GiipScriptType 이 담당한다.
+$rawScriptType = "$($queue.script_type)"
+$scriptType = ConvertTo-GiipScriptType -RawType $rawScriptType
 $msBody = [string]$queue.ms_body
 $mslsn = $queue.mslsn
 $mssn = $queue.mssn
@@ -132,18 +135,19 @@ if ($Config['cqetimeoutsec']) {
 }
 
 if (-not (Get-GiipScriptTypeInfo -Type $scriptType)) {
-    Write-GiipLog "ERROR" "[CqeRun] Unsupported script_type='$scriptType' (mslsn=$mslsn mssn=$mssn)."
+    Write-GiipLog "ERROR" "[CqeRun] Unsupported script_type='$rawScriptType' (normalized='$scriptType', mslsn=$mslsn mssn=$mssn)."
     Save-ExecutionLog -Config $Config -EventType "error" -DetailsObj @{
         error_type    = "unsupported_script_type"
-        error_message = "Unsupported script_type: $scriptType"
+        error_message = "Unsupported script_type: $rawScriptType (normalized: $scriptType)"
         context       = "cqe_run"
+        script_type   = $rawScriptType
         mslsn         = $mslsn
         mssn          = $mssn
     } | Out-Null
     exit 1
 }
 
-Write-GiipLog "INFO" "[CqeRun] Executing CQE task mslsn=$mslsn mssn=$mssn script_type=$scriptType timeout=${timeoutSec}s"
+Write-GiipLog "INFO" "[CqeRun] Executing CQE task mslsn=$mslsn mssn=$mssn script_type=$scriptType (raw='$rawScriptType') timeout=${timeoutSec}s"
 
 $startTime = Get-Date
 $execResult = Invoke-ScriptBlock -Type $scriptType -Body $msBody -TimeoutSec $timeoutSec
