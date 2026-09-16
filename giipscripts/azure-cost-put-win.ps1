@@ -531,13 +531,35 @@ if ($resp -and ($resp.RstVal -eq "200" -or $resp.RstVal -eq 200)) {
     # 즉시 tAzureCostSnapshot(장기 보관 겸 조회 전용 테이블)에 반영해 34일 삭제 전 유실을 막는다.
     # 실패해도 조회 SP(pApiAzureCostbyAK 등)가 tKVS raw fallback으로 즉시 복구 가능하므로 WARN만 남기고
     # 이 스크립트 자체의 성공/실패(exit code)에는 영향을 주지 않는다.
+    #
+    # giip #2610: 판정부는 "RstVal 이 200 이 아니다"와 "RstVal 이 응답에 아예 없다"를
+    # 반드시 구분해서 로그에 남긴다.
+    #   2026-09-07~09-16 10일 연속으로 `RstVal=`(빈 문자열) WARN 이 찍혔는데, 실제로는 동기화가
+    #   성공하고 있었다. 원인은 서버 SP(pApiAzureCostSnapshotSyncbySk)가 결과셋을 2개 반환했고
+    #   giipApi 직렬화 계층이 **첫 번째 결과셋만** data 로 내보내 RstVal 이 응답에서 통째로
+    #   사라진 것이다(SP 쪽은 giipdb PR 에서 단일 결과셋으로 수정함).
+    #   PowerShell 은 없는 속성 접근에 예외 없이 $null 을 주므로 "$syncResp.RstVal" 이 빈
+    #   문자열로 보간됐고, 그래서 "실패했는데 코드가 안 찍힌 것"과 구분이 안 됐다.
+    #   → RstVal 이 없으면 응답 원문을 함께 남겨, 다음에 계약이 또 어긋나도 로그만 보고
+    #     원인을 알 수 있게 한다.
     try {
         $syncJson = (@{ lssn = "$($Config.lssn)" } | ConvertTo-Json -Compress)
         $syncResp = Invoke-GiipApiV2 -Config $Config -CommandText "AzureCostSnapshotSync lssn" -JsonData $syncJson
-        if ($syncResp -and ($syncResp.RstVal -eq "200" -or $syncResp.RstVal -eq 200)) {
-            Write-TaskLog "INFO" "Azure cost snapshot sync (tAzureCostSnapshot) succeeded."
+        $syncRst = if ($syncResp) { $syncResp.RstVal } else { $null }
+        if ($null -ne $syncRst -and "$syncRst" -eq "200") {
+            $mergedInfo = if ($null -ne $syncResp.mergedRows) { " (mergedRows=$($syncResp.mergedRows))" } else { "" }
+            Write-TaskLog "INFO" "Azure cost snapshot sync (tAzureCostSnapshot) succeeded.$mergedInfo"
         } else {
-            $srv = if ($syncResp) { $syncResp.RstVal } else { "no-response" }
+            $srv = if (-not $syncResp) {
+                "no-response"
+            } elseif ($null -eq $syncRst) {
+                # 응답은 왔는데 RstVal 이 없다 = 서버 응답 계약 위반. 원문을 남긴다.
+                $dump = try { ($syncResp | ConvertTo-Json -Compress -Depth 4) } catch { "$syncResp" }
+                if ($dump.Length -gt 500) { $dump = $dump.Substring(0, 500) + "...(truncated)" }
+                "missing-RstVal; response=$dump"
+            } else {
+                "$syncRst"
+            }
             Write-TaskLog "WARN" "Azure cost snapshot sync failed (RstVal=$srv) -- tKVS push already succeeded, read-path raw fallback will cover the gap."
         }
     } catch {
