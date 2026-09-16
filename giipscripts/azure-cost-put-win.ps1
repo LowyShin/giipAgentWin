@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 # azure-cost-put-win.ps1
 # Purpose : Collect Azure usage & cost via Azure Cost Management API (az rest),
 #           save as JSON, and push the summary to GIIP KVS (kFactor="azure_cost").
@@ -29,7 +29,14 @@ param(
                                       # MonthToDate run. For ad-hoc/debug runs, pass a different -Factor
                                       # (e.g. azure_cost_test) instead of the production one.
     [string]$Factor = "azure_cost",  # KVS kFactor
-    [string]$OutFile                 # Raw JSON output path (else giipLogs\azure\...)
+    [string]$OutFile,                # Raw JSON output path (else giipLogs\azure\...)
+
+    # --- giip #2604: 수집 직후 MQE(tMQLog) 일일 증감 보고 --------------------
+    [switch]$SkipMqeReport,               # 지정하면 MQE 보고를 건너뛴다(테스트/디버그 실행용)
+    [double]$AlertThresholdPercent = -1,  # 급증 알람 임계(%). -1 = cfg azure_cost_alert_pct > 기본 10
+    [string]$MqeTo = "",                  # 비우면 cfg mqe_to, 그것도 없으면 mqTo 미지정(csn 기본 수신처)
+    [string]$MqeType = "slack",           # csn 47 기존 관례(tMQENotificationConfig.mqType='slack')
+    [string]$MqeSk = ""                   # 비우면 cfg sk. **이 SK 가 곧 보고서가 들어갈 cSn 을 결정한다.**
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,6 +53,8 @@ $Global:BaseDir = $AgentRoot                                # so Get-GiipConfig 
 
 . (Join-Path $LibDir "Common.ps1")   # Get-GiipConfig, Invoke-GiipApiV2, Write-GiipLog
 . (Join-Path $LibDir "Kvs.ps1")      # Invoke-GiipKvsPut
+. (Join-Path $LibDir "Mqe.ps1")            # giip #2604: Invoke-GiipMqLogPut (tMQLog 등록)
+. (Join-Path $LibDir "AzureCostReport.ps1") # giip #2604: Send-AzureCostDeltaReport (증감 계산·보고)
 
 # --- Persistent run log for Task Scheduler diagnostics -----------------------
 $AzLogDir = Join-Path $AgentRoot "..\giipLogs\azure"
@@ -487,6 +496,30 @@ if ($rgSvcStaleSince) { $summary | Add-Member -NotePropertyName "by_resource_gro
 if ($rgCollectionFailed) { $summary | Add-Member -NotePropertyName "by_resource_group_collection_failed" -NotePropertyValue $true }
 if ($rgSvcCollectionFailed) { $summary | Add-Member -NotePropertyName "by_resource_group_service_collection_failed" -NotePropertyValue $true }
 
+# --- giip #2604: 일일 증감 보고용 "직전 수집분" 확보 ---------------------------
+# ⚠️ 반드시 KVS push **이전에** 가져와야 한다. push 후에는 KVSFactorLast 가 오늘 값이라
+# 비교 대상이 사라진다(KVSFactorLast 는 최신 1건만 준다).
+# Get-PreviousAzureCostValue 는 내부 캐시가 있어, 위 carry-forward 경로에서 이미
+# 조회했다면 API 호출이 추가로 나가지 않는다.
+$prevSummaryForReport = $null
+if (-not $SkipMqeReport) {
+    $prevSummaryForReport = Get-PreviousAzureCostValue
+    if ($null -eq $prevSummaryForReport) {
+        Write-TaskLog "WARN" "직전 KVS 레코드가 없어 일일 증감 보고는 '비교 불가'로 등록된다(최초 실행이거나 조회 실패). 0 으로 치지 않는다."
+    }
+}
+
+# --- giip #2604: 이번 요약(kValue)을 날짜별 스냅샷으로 남긴다 ------------------
+# tKVS 는 pAdmCleanTable(기본 34일)이 주기 삭제하고 KVSFactorLast 는 최신 1건만 준다.
+# 수동 재발송·사후 검증(giipscripts/azure-cost-report-mqe.ps1)이 쓸 원본을 남겨 둔다.
+try {
+    $summarySnapshot = Join-Path $AzLogDir ("azure_cost_summary_{0}_{1}.json" -f $Factor, $today.ToString("yyyyMMdd"))
+    [System.IO.File]::WriteAllText($summarySnapshot, ($summary | ConvertTo-Json -Depth 10), $utf8NoBom)
+    Write-TaskLog "INFO" "Saved summary snapshot -> $summarySnapshot"
+} catch {
+    Write-TaskLog "WARN" "Summary snapshot save failed: $($_.Exception.Message)"
+}
+
 # --- Push to GIIP KVS --------------------------------------------------------
 Write-TaskLog "INFO" "Pushing azure_cost to KVS (lssn=$($Config.lssn), total=$($summary.total_pretax_cost) $currency)."
 $resp = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor $Factor -Value $summary
@@ -509,6 +542,32 @@ if ($resp -and ($resp.RstVal -eq "200" -or $resp.RstVal -eq 200)) {
         }
     } catch {
         Write-TaskLog "WARN" "Azure cost snapshot sync threw: $($_.Exception.Message) -- tKVS push already succeeded, read-path raw fallback will cover the gap."
+    }
+
+    # giip #2604: 직전 수집 대비 증감 보고서를 MQE(tMQLog, cSn 은 SK 로 결정됨)에 등록한다.
+    # 10% (기본) 이상 증가면 제목이 "급증 경보"로 바뀐다. 미만이어도 매일 보고한다.
+    # 등록 실패는 수집 실패가 아니므로 exit code 에는 영향을 주지 않는다(로그만 남긴다).
+    if ($SkipMqeReport) {
+        Write-TaskLog "INFO" "MQE 일일 증감 보고 건너뜀(-SkipMqeReport)."
+    } else {
+        try {
+            $reportResult = Send-AzureCostDeltaReport -Config $Config -Current $summary -Previous $prevSummaryForReport `
+                -ThresholdPercent $AlertThresholdPercent -Lssn "$($Config.lssn)" -To $MqeTo -Type $MqeType -Sk $MqeSk
+            $rpt = $reportResult.Report
+            $mqr = $reportResult.MqResult
+            Write-TaskLog "INFO" ("MQE report built: comparable={0} alert={1} threshold={2}% subject='{3}'" -f `
+                $rpt.Comparable, $rpt.IsAlert, $reportResult.Threshold, $rpt.Subject)
+            if ($mqr.Ok) {
+                Write-TaskLog "INFO" "MQE report registered into tMQLog (mqSn=$($mqr.MqSn))."
+            } elseif ($mqr.Skipped) {
+                # RstVal 200 이지만 INSERT 되지 않았다 -- 절대 성공으로 취급하지 않는다.
+                Write-TaskLog "WARN" "MQE report SKIPPED by duplicate gate (RstVal=200, mqSn=0): 같은 제목/수신처/csn 의 미발송 메시지가 이미 있다. 보고서는 등록되지 않았다."
+            } else {
+                Write-TaskLog "ERROR" "MQE report registration failed (RstVal=$($mqr.RstVal), RstMsg='$($mqr.RstMsg)'). KVS 적재 자체는 성공했으므로 수집은 정상 종료한다."
+            }
+        } catch {
+            Write-TaskLog "ERROR" "MQE report threw: $($_.Exception.Message). KVS 적재 자체는 성공했으므로 수집은 정상 종료한다."
+        }
     }
 
     exit 0
