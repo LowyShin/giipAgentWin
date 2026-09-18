@@ -32,3 +32,19 @@ Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Pr
 
 Write-Host "Task '$taskName' registered successfully to run every 5 minutes." -ForegroundColor Green
 
+# ============================================================================
+# giip #2426: Register auto-discovery task (6-hour interval)
+# This populates servers.ips (LSNIFGlobal) via AgentAutoRegister API.
+# Without this, Net3D cannot map external IPs to server nodes.
+# ============================================================================
+$autoDiscoverScript = Join-Path $scriptDir "giip-auto-discover-launcher.ps1"
+if (Test-Path $autoDiscoverScript) {
+    $autoDiscoverTaskName = "GIIP Auto-Discovery (v3)"
+    $autoDiscoverAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$autoDiscoverScript`""
+    # Run once at startup, then repeat every 6 hours
+    $autoDiscoverTrigger = New-ScheduledTaskTrigger -Once -At "00:00" -RepetitionInterval (New-TimeSpan -Hours 6)
+    Register-ScheduledTask -TaskName $autoDiscoverTaskName -Action $autoDiscoverAction -Trigger $autoDiscoverTrigger -Principal $principal -Force
+    Write-Host "Task '$autoDiscoverTaskName' registered to run every 6 hours." -ForegroundColor Green
+} else {
+    Write-Warning "giip-auto-discover-launcher.ps1 not found at $autoDiscoverScript. Auto-discovery task not registered."
+}
