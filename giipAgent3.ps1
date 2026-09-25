@@ -191,6 +191,13 @@ try {
         & $enhancedMetricsScript
     }
 
+    # 8. Docker Resource Metrics (giip 3043, 1/4 단계)
+    $dockerMetricsScript = Join-Path $ModuleDir "CollectDockerMetrics.ps1"
+    if (Test-Path $dockerMetricsScript) {
+        Write-GiipLog "INFO" "[Step 8] Running Docker Resource Metrics Collector..."
+        & $dockerMetricsScript
+    }
+
     Write-GiipLog "INFO" "=== giipAgent3.ps1 Completed ==="
     $runStatus = "SUCCEEDED"
     $runExitCode = 0
