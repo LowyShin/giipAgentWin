@@ -11,7 +11,7 @@ giipAgent의 핵심 기능 리스트 및 기술적 상세 사양입니다.
 ## 1. 코어 에이전트 및 오케스트레이션
 - **Main Entry Point**: `giipAgent3.ps1`
   - 에이전트 실행의 주 진입점. 라이브러리 로드 및 각 모듈(`CleanState`, `CqeGet`, `CqeRun`, `DbMonitor`, `ProcessList` ...)을 순차적으로 실행.
-  - 실행 순서: Step 1 `CleanState` → Step 2 `CqeGet` → **Step 2.5 `CqeRun`** → Step 3 `DbMonitor` → Step 4 `ProcessList` → Step 5 `DbConnectionList` → Step 6 `HostConnectionList` → Step 7 `CollectEnhancedMetrics`.
+  - 실행 순서: Step 1 `CleanState` → Step 2 `CqeGet` → **Step 2.5 `CqeRun`** → Step 3 `DbMonitor` → Step 4 `ProcessList` → Step 5 `DbConnectionList` → Step 6 `HostConnectionList` → Step 7 `CollectEnhancedMetrics` → Step 8 `CollectDockerMetrics`.
 - **상태 관리 (State Management)**: `giipscripts/modules/CleanState.ps1`
   - `data/` 디렉토리 내의 이전 실행 파일(`queue.json`, `task_result.json` 등) 삭제 및 7일 경과된 로그 정리.
   - giip #2546: **내용이 있는 `queue.json`을 지우게 되면 WARN 로그**를 남긴다. 정상 흐름이라면 `CqeRun`이 같은 실행 안에서 이미 소비했어야 하므로, 이 WARN 은 "받아만 놓고 실행하지 않은 작업을 버리는 중"이라는 회귀 신호다.
@@ -88,6 +88,32 @@ giipAgent의 핵심 기능 리스트 및 기술적 상세 사양입니다.
 ## 5. 네트워크 연결 분석
 - **커넥션 리스트**: `giipscripts/modules/DbConnectionList.ps1`, `giipscripts/modules/HostConnectionList.ps1`
   - 서버 및 DB 간의 실시간 세션 연결 데이터를 분석하여 토폴로지 구성용 데이터 생성.
+
+## 6. Docker 리소스 수집 (giip 3043, 1/4 단계)
+- **Docker 리소스 메트릭**: `giipscripts/modules/CollectDockerMetrics.ps1`
+  - Docker Instances "Provision now" 드롭다운에서 lssn 별 리소스 여유도를 보여주기 위한 4단계
+    작업 중 **1단계(수집)** 만 담당한다. 화면/드롭다운 자체는 giipv3 쪽 2~4단계에서 별도로 구현된다.
+  - **감지**: `Get-Command docker`로 CLI 존재를 확인하고, `docker version --format
+    '{{.Server.Version}}'` 실행 성공 여부로 데몬 기동 여부를 판정한다. CLI 가 없거나 데몬이 응답하지
+    않으면 `dockerInstalled=$false` 만 KVS 에 올리고 나머지 수집은 건너뛴다 — Docker 가 설치되지
+    않은 서버가 대부분일 것이므로 이것이 **정상 경로**이며 에러로 취급하지 않는다.
+  - **수집 항목**(설치돼 있을 때만): `docker info --format '{{json .}}'` 로
+    `ContainersRunning`/`Containers`/`Images` 개수를, `docker system df --format '{{json .}}'` 로
+    타입별(Images/Containers/Local Volumes/Build Cache) `Size`/`Reclaimable` 크기 문자열(예:
+    `"1.199GB"`, `"113.2MB (69%)"`)을 가져와 GB 단위 합계로 환산한다. 각 cmd 파싱은 개별
+    try/catch 로 감싸 한쪽이 실패해도 나머지 수집과 업로드는 계속된다.
+  - **업로드**: `Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor
+    "docker_usage" -Value $payload` (기존 `performance_metrics`/`process_list` 와 동일한 KVS
+    인프라를 재사용, 신규 테이블 없음). Payload 필드:
+    `dockerInstalled`/`dockerVersion`/`containersRunning`/`containersTotal`/`imagesCount`/
+    `diskUsedGb`/`diskReclaimableGb`/`collectedAt`.
+  - **호출 등록**: `giipAgent3.ps1` Step 8(Step 7 `CollectEnhancedMetrics` 다음).
+  - **미검증 사항(2026-09-25)**: 이 작업을 수행한 Windows 개발 PC에는 Docker Desktop 이 설치돼
+    있지 않아 `docker info`/`docker system df` 의 **실제 출력 포맷을 라이브로 검증하지 못했다**.
+    구현은 Docker CLI 공식 문서상 알려진 포맷(정보 필드명, `docker system df --format
+    '{{json .}}'` 가 타입별로 한 줄씩 JSON 을 출력하는 방식)에 근거한 추정이며, 문법 검사(PowerShell
+    파서)만 통과했다. Docker 가 실제로 설치된 서버에서 1회 실측 후 파싱 로직이 맞는지 확인이
+    필요하다.
 
 ---
 
