@@ -229,9 +229,15 @@ try {
 
     # Upload all metrics under a single factor to KVS (Pass the hashtable directly to avoid double stringification)
     Write-GiipLog "INFO" "[CollectEnhancedMetrics] Uploading unified performance metrics to KVS (Factor: performance_metrics)..."
-    Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "performance_metrics" -Value $unifiedPayload | Out-Null
+    $kvsResp = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "performance_metrics" -Value $unifiedPayload
 
-    Write-GiipLog "INFO" "[CollectEnhancedMetrics] Successfully collected and uploaded unified performance metrics."
+    # giip #3079: 반환값을 Out-Null로 버리고 무조건 "성공" 로그를 남기던 것과 같은
+    # 클래스의 버그(CollectDockerMetrics.ps1에서 실측). RstVal을 실제로 확인한다.
+    if ($kvsResp -and $kvsResp.RstVal -eq "200") {
+        Write-GiipLog "INFO" "[CollectEnhancedMetrics] Successfully collected and uploaded unified performance metrics."
+    } else {
+        Write-GiipApiFailure -Config $Config -Context "[CollectEnhancedMetrics] KVS upload (performance_metrics)" -Response $kvsResp
+    }
 }
 catch {
     Write-GiipLog "ERROR" "[CollectEnhancedMetrics] Unexpected error collecting performance details: $_"

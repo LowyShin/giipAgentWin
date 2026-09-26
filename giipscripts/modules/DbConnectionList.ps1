@@ -244,8 +244,14 @@ try {
                         $fullText = $q.full_sql
                         if ($fullText.Length -gt 20000) { $fullText = $fullText.Substring(0, 20000) }
                         
-                        Invoke-GiipKvsPut -Config $Config -Type "query" -Key $qHash -Factor "full_text" -Value $fullText | Out-Null
-                        Write-GiipLog "DEBUG" "[DbConnectionList] Uploaded full text for query $qHash"
+                        # giip #3079: 반환값을 Out-Null로 버리고 무조건 "Uploaded" 로그를
+                        # 남기던 버그. RstVal을 실제로 확인한다.
+                        $ftResp = Invoke-GiipKvsPut -Config $Config -Type "query" -Key $qHash -Factor "full_text" -Value $fullText
+                        if ($ftResp -and $ftResp.RstVal -eq "200") {
+                            Write-GiipLog "DEBUG" "[DbConnectionList] Uploaded full text for query $qHash"
+                        } else {
+                            Write-GiipApiFailure -Config $Config -Context "[DbConnectionList] full_text upload (query=$qHash)" -Response $ftResp
+                        }
                     }
                 }
             }
