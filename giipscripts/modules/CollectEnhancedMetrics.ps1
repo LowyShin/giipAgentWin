@@ -227,16 +227,56 @@ try {
         top_mem_processes    = $topMemProcsList
     }
 
-    # Upload all metrics under a single factor to KVS (Pass the hashtable directly to avoid double stringification)
-    Write-GiipLog "INFO" "[CollectEnhancedMetrics] Uploading unified performance metrics to KVS (Factor: performance_metrics)..."
-    $kvsResp = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "performance_metrics" -Value $unifiedPayload
+    # Upload all metrics under a single factor to KVS with retry and local buffer (giip #3116)
+    # - Max 3 retries with exponential backoff (1s, 2s, 4s)
+    # - Buffer payload to local file before each retry attempt
+    # - Delete buffer file on successful upload
+    # - Exit 0 even when all retries fail (metrics collection itself succeeded)
+    $kvsSuccess = $false
+    $maxRetries = 3
+    $bufferDir = Join-Path $AgentRoot "giipLogs/payloads"
+    $bufferFile = $null
 
-    # giip #3079: 반환값을 Out-Null로 버리고 무조건 "성공" 로그를 남기던 것과 같은
-    # 클래스의 버그(CollectDockerMetrics.ps1에서 실측). RstVal을 실제로 확인한다.
-    if ($kvsResp -and $kvsResp.RstVal -eq "200") {
-        Write-GiipLog "INFO" "[CollectEnhancedMetrics] Successfully collected and uploaded unified performance metrics."
-    } else {
+    if (-not (Test-Path $bufferDir)) {
+        try { New-Item -Path $bufferDir -ItemType Directory -Force | Out-Null } catch {}
+    }
+
+    for ($retry = 0; $retry -lt $maxRetries; $retry++) {
+        if ($retry -gt 0) {
+            $backoffSec = [math]::Pow(2, $retry - 1)
+            Write-GiipLog "INFO" "[CollectEnhancedMetrics] KVS upload retry $retry/$maxRetries after ${backoffSec}s backoff..."
+            Start-Sleep -Seconds $backoffSec
+        }
+
+        # Buffer payload before attempt
+        if (-not $bufferFile) {
+            $ts = Get-Date -Format "yyyyMMdd_HHmmss_fff"
+            $bufferFile = Join-Path $bufferDir "CollectEnhancedMetrics_${ts}_retry${retry}.json"
+            try {
+                $payloadJson = $unifiedPayload | ConvertTo-Json -Compress -Depth 10
+                $payloadJson | Set-Content -Path $bufferFile -Encoding ASCII
+            } catch {
+                Write-GiipLog "WARN" "[CollectEnhancedMetrics] Failed to write buffer file: $_"
+            }
+        }
+
+        $kvsResp = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "performance_metrics" -Value $unifiedPayload
+
+        if ($kvsResp -and $kvsResp.RstVal -eq "200") {
+            Write-GiipLog "INFO" "[CollectEnhancedMetrics] Successfully collected and uploaded unified performance metrics."
+            $kvsSuccess = $true
+            # Delete buffer file on success
+            if ($bufferFile -and (Test-Path $bufferFile)) {
+                try { Remove-Item -Path $bufferFile -Force } catch {}
+            }
+            break
+        }
+    }
+
+    if (-not $kvsSuccess) {
         Write-GiipApiFailure -Config $Config -Context "[CollectEnhancedMetrics] KVS upload (performance_metrics)" -Response $kvsResp
+        # giip #3116: All retries exhausted, but metrics collection itself succeeded - exit 0
+        Write-GiipLog "WARN" "[CollectEnhancedMetrics] KVS upload failed after $maxRetries retries. Metrics collected but not uploaded. Buffer saved at: $bufferFile"
     }
 }
 catch {
