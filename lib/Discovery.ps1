@@ -140,12 +140,18 @@ function Invoke-Discovery {
         # giip #2556: Send-KVSPut 은 이 레포에 정의가 없다. 2025-12-14 커밋
         # bc813d8 이 lib/Kvs.ps1 재작성 때 Invoke-GiipKvsPut 으로 개명했는데 이
         # 호출부만 갱신되지 않았다. 실제 시그니처(-Type/-Key/-Factor/-Value)로 교정.
-        Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$lssn" -Factor "auto_discover_result" -Value $jsonString
-        
-        # Update State
-        [int64](Get-Date -UFormat %s) | Set-Content $stateFile
-        
-        Write-GiipLog "INFO" "Discovery completed and saved."
+        # giip #3079: 반환값을 확인하지 않고 무조건 "completed and saved" 로 남기던
+        # 버그. RstVal을 실제로 확인한다.
+        $discResp = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$lssn" -Factor "auto_discover_result" -Value $jsonString
+
+        if ($discResp -and $discResp.RstVal -eq "200") {
+            # Update State
+            [int64](Get-Date -UFormat %s) | Set-Content $stateFile
+            Write-GiipLog "INFO" "Discovery completed and saved."
+        } else {
+            Write-GiipApiFailure -Config $Config -Context "[Discovery] auto_discover_result KVS put" -Response $discResp
+            Save-ExecutionLog -Config $Config -EventType "error" -DetailsObj @{ type = "discovery"; msg = "KVS put failed"; rstVal = $(if ($discResp) { $discResp.RstVal } else { $null }) }
+        }
 
     }
     catch {

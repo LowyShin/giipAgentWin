@@ -116,8 +116,14 @@ try {
 
                         Write-GiipLog "INFO" ("[DbUserList] Sending user_list for mdb_id=$mdb_id, host=$dbHost (MSSQL)")
                         # Use standard 'jsondata' parameter as now supported/fixed in Sk3
-                        Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata" -JsonData $jsonPayload | Out-Null
-                        Write-GiipLog "INFO" ("[DbUserList] Data uploaded for {0} (Success)" -f $dbHost)
+                        # giip #3079: 반환값을 Out-Null로 버리고 무조건 "(Success)" 로그를
+                        # 남기던 버그. RstVal을 실제로 확인한다.
+                        $ulResp = Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata" -JsonData $jsonPayload
+                        if ($ulResp -and $ulResp.RstVal -eq "200") {
+                            Write-GiipLog "INFO" ("[DbUserList] Data uploaded for {0} (Success)" -f $dbHost)
+                        } else {
+                            Write-GiipApiFailure -Config $Config -Context "[DbUserList] Net3dUserListPut (MSSQL, host=$dbHost)" -Response $ulResp
+                        }
                     }
                 }
                 catch {
@@ -181,8 +187,14 @@ ORDER BY User;
 
                         Write-GiipLog "INFO" ("[DbUserList] Sending user_list for mdb_id=$mdb_id, host=$dbHost (MySQL)")
                         # Use standard 'jsondata' parameter as now supported/fixed in Sk3
-                        Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata" -JsonData $jsonPayload | Out-Null
-                        Write-GiipLog "INFO" ("[DbUserList] Data uploaded for {0} (Success)" -f $dbHost)
+                        # giip #3079: 반환값을 Out-Null로 버리고 무조건 "(Success)" 로그를
+                        # 남기던 버그. RstVal을 실제로 확인한다.
+                        $ulResp = Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata" -JsonData $jsonPayload
+                        if ($ulResp -and $ulResp.RstVal -eq "200") {
+                            Write-GiipLog "INFO" ("[DbUserList] Data uploaded for {0} (Success)" -f $dbHost)
+                        } else {
+                            Write-GiipApiFailure -Config $Config -Context "[DbUserList] Net3dUserListPut (MySQL, host=$dbHost)" -Response $ulResp
+                        }
                     }
                 }
                 catch {

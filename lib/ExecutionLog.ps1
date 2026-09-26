@@ -58,8 +58,20 @@ function Save-ExecutionLog {
         }
 
         $response = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$lssn" -Factor "giipagent" -Value $kValue
-        Write-GiipLog "INFO" "[ExecutionLog] event_type=$EventType sent (RstVal=$($response.RstVal))"
-        return $true
+
+        # giip #3079: 이전에는 RstVal 값을 로그 문자열에 끼워 넣기만 하고 INFO 로
+        # 고정해서, 실패(RstVal != 200)해도 로그 레벨이 "성공"처럼 보였다. 실제로
+        # 확인해서 레벨을 정직하게 고른다.
+        if ($response -and $response.RstVal -eq "200") {
+            Write-GiipLog "INFO" "[ExecutionLog] event_type=$EventType sent (RstVal=$($response.RstVal))"
+            return $true
+        }
+        if (Get-Command Write-GiipApiFailure -ErrorAction SilentlyContinue) {
+            Write-GiipApiFailure -Config $Config -Context "[ExecutionLog] event_type=$EventType KVS put" -Response $response
+        } else {
+            Write-GiipLog "ERROR" "[ExecutionLog] event_type=$EventType failed (RstVal=$($response.RstVal))"
+        }
+        return $false
     }
     catch {
         Write-GiipLog "WARN" "[ExecutionLog] Failed to save '$EventType' log (non-fatal): $($_.Exception.Message)"

@@ -13,15 +13,31 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
 Set-Location $ScriptDir
 
+# giip #3079 (사용자 지시 2026-09-26): "어떤 상태라도 독립적으로 git pull이 성공해야
+# 해야, 수정된 파일을 각 머신들이 받아서 업데이트하지" - 기존 코드는 이미 sync를
+# giipAgent3.ps1 실행 "이전"에 실행해서 에이전트 본 로직(API 호출 등)의 실패가 sync를
+# 막을 수는 없는 구조였다. 다만 반대 방향 결합이 있었다: sync가 실패하면(exit 1)
+# 이번 주기의 giipAgent3.ps1 자체를 통째로 건너뛰었다(exit 1로 launcher 종료) - 코드
+# 갱신 실패와 모니터링/보고 업무 사이에는 인과관계가 없으므로 이것도 분리한다.
+# 추가로 & 호출 자체가 예기치 못한 종료 예외를 던져도(-ErrorActionPreference가
+# 상위 스코프에서 "Stop"인 이 launcher에서) giipAgent3.ps1 실행이 막히지 않도록
+# try/catch로 감싼다.
 $syncScript = Join-Path $ScriptDir "git-auto-sync.ps1"
 if (Test-Path $syncScript) {
     Write-Host "Starting Safe Git Sync..."
-    & $syncScript
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "ERROR: Sync failed. Agent will not start."
-        exit 1
+    $syncExitCode = 1
+    try {
+        & $syncScript
+        $syncExitCode = $LASTEXITCODE
+    } catch {
+        Write-Host "ERROR: git-auto-sync.ps1 threw an unexpected exception: $_"
+        $syncExitCode = 1
     }
-    Write-Host "Safe Git Sync completed successfully."
+    if ($syncExitCode -ne 0) {
+        Write-Host "ERROR: Sync failed (exit=$syncExitCode). Continuing to run giipAgent3.ps1 anyway - the next scheduled run (5 min) will retry the sync independently."
+    } else {
+        Write-Host "Safe Git Sync completed successfully."
+    }
 } else {
     Write-Host "WARN: git-auto-sync.ps1 not found at $syncScript. Skipping sync."
 }

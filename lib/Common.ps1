@@ -304,18 +304,56 @@ function Invoke-GiipApiV2 {
         }
         
         if ($response.ak) { $Global:GiipSessionAK = $response.ak }
-        
-        # Debug: Log non-success responses
+
+        # giip #3079 (csn 70418 실측): 이 두 로그가 DEBUG 레벨이었던 것 자체가 근본 원인
+        # 중 하나였다 - HTTP 200으로 도착한 400/500급 애플리케이션 오류(RstVal != 200)도,
+        # 진짜 네트워크/예외 실패도 전부 DEBUG로만 남아서, 호출부가 반환값을 제대로
+        # 확인해도 사람이 로그를 볼 때는 "오류가 안 보이는" 상태였다. WARN/ERROR로 올린다.
         if ($response.RstVal -and $response.RstVal -ne "200") {
             $rawJson = $webResponse.Content
-            Write-GiipLog "DEBUG" "API Non-Success Response ($($response.RstVal)): $rawJson"
+            Write-GiipLog "WARN" "API Non-Success Response ($($response.RstVal)): $rawJson"
         }
-        
+
         if ($RawList) { return $response }
         if ($response.data -and $response.data.Count -gt 0) { return $response.data[0] }
         return $response
     } catch {
-        Write-GiipLog "DEBUG" "API Call Failed: $_"
+        Write-GiipLog "ERROR" "API Call Failed: $_"
         return $null
+    }
+}
+
+# giip #3079: API 호출은 HTTP 200으로 도착해도 애플리케이션 레벨에서 실패(RstVal != 200)
+# 할 수 있고, Invoke-GiipApiV2는 그 경우에도 예외를 던지지 않고 응답 객체를 그대로
+# 반환한다(네트워크 예외/URI 누락일 때만 $null). 호출부가 반환값을 Out-Null로 버리거나
+# 확인 없이 "성공" 로그를 남기면, 400/500 응답이 로그에는 성공으로 남는다(csn 70418
+# 실측 - CollectDockerMetrics.ps1 giip 3043에서 발견). 실패로 판정된 호출부는 이 함수로
+# (a) ERROR 레벨 로그를 남기고 (b) 이미 이 레포에 있었지만 어디서도 호출되지 않던
+# 기존 giip 오류 보고 채널(lib/ErrorLog.ps1 sendErrorLog -> ErrorLogCreate SP)을
+# 재사용해 서버에도 알린다. giipfaw agent-log-* 계열(스트림 등록/시퀀스 번호가 필요한
+# 별도 파이프라인)은 새 통합 작업이 필요해 이번 범위에서 손대지 않았다 - 판단 근거는
+# giip 3079 완료 코멘트 참고.
+function Write-GiipApiFailure {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Config,
+        [Parameter(Mandatory = $true)][string]$Context,
+        [object]$Response
+    )
+    $rstVal = if ($Response -and $Response.RstVal) { $Response.RstVal } else { "no-response" }
+    $rstMsg = if ($Response -and $Response.RstMsg) { $Response.RstMsg } else { "null response (network/exception or missing config)" }
+    $msg = "$Context failed (RstVal=$rstVal, RstMsg=$rstMsg)"
+    Write-GiipLog "ERROR" $msg
+
+    try {
+        if (-not (Get-Command sendErrorLog -ErrorAction SilentlyContinue)) {
+            $__errorLogPath = Join-Path $PSScriptRoot "ErrorLog.ps1"
+            if (Test-Path $__errorLogPath) { . $__errorLogPath }
+        }
+        if (Get-Command sendErrorLog -ErrorAction SilentlyContinue) {
+            sendErrorLog -Config $Config -Message $msg -Severity 'error' | Out-Null
+        }
+    } catch {
+        Write-GiipLog "DEBUG" "[Write-GiipApiFailure] sendErrorLog reuse failed (non-fatal): $_"
     }
 }

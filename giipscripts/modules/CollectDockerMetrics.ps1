@@ -160,9 +160,16 @@ try {
     }
 
     Write-GiipLog "INFO" "[CollectDockerMetrics] Uploading Docker resource usage to KVS (Factor: docker_usage)..."
-    Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "docker_usage" -Value $payload | Out-Null
+    $kvsResp = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "docker_usage" -Value $payload
 
-    Write-GiipLog "INFO" "[CollectDockerMetrics] Successfully collected and uploaded Docker resource usage."
+    # giip #3079 (csn 70418 실측): 반환값을 Out-Null로 버리고 무조건 "성공" 로그를
+    # 남기던 버그. HTTP 400/500이 와도 로그에는 정상으로 보였다. 반환값의 RstVal을
+    # 실제로 확인해서 로그 레벨을 정직하게 고른다.
+    if ($kvsResp -and $kvsResp.RstVal -eq "200") {
+        Write-GiipLog "INFO" "[CollectDockerMetrics] Successfully collected and uploaded Docker resource usage."
+    } else {
+        Write-GiipApiFailure -Config $Config -Context "[CollectDockerMetrics] KVS upload (docker_usage)" -Response $kvsResp
+    }
 }
 catch {
     Write-GiipLog "ERROR" "[CollectDockerMetrics] Unexpected error uploading Docker metrics to KVS: $_"

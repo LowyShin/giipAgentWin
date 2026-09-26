@@ -70,6 +70,11 @@ giipAgent의 핵심 기능 리스트 및 기술적 상세 사양입니다.
      끝의 요약 마커 도달 여부로 판별할 수 있게 스크립트가 **마지막에 요약을 찍도록** 만든다.
 - **자동 업데이트 (Auto-Sync)**: `git-auto-sync.ps1`
   - 설정된 브랜치(`real` 또는 `main`)로 Git Pull 수행.
+  - **독립성(giip 3079)**: `giipAgent3-launcher.ps1`이 `giipAgent3.ps1`보다 먼저 실행하므로
+    에이전트 본 로직(API 호출 등)의 실패가 pull 자체를 막을 수는 없었다. 다만 반대 결합이
+    있었다 - sync가 실패하면 이번 주기의 `giipAgent3.ps1` 실행을 통째로 건너뛰었다. 코드 갱신과
+    모니터링 업무는 서로 무관하므로 분리했다: sync 실패는 로그만 남기고 `giipAgent3.ps1`은 계속
+    실행한다(다음 5분 주기가 sync를 독립적으로 재시도).
 
 ## 3. 인프라 자동 검색 (Auto-Discovery)
 - **데이터 수집**: `giipscripts/auto-discover-win.ps1`
@@ -114,6 +119,25 @@ giipAgent의 핵심 기능 리스트 및 기술적 상세 사양입니다.
     '{{json .}}'` 가 타입별로 한 줄씩 JSON 을 출력하는 방식)에 근거한 추정이며, 문법 검사(PowerShell
     파서)만 통과했다. Docker 가 실제로 설치된 서버에서 1회 실측 후 파싱 로직이 맞는지 확인이
     필요하다.
+
+## 7. API 호출 실패 보고 원칙 (giip 3079)
+- **문제(csn 70418 실측)**: `Invoke-GiipApiV2`(`lib/Common.ps1`)는 애플리케이션 레벨 실패
+  (HTTP 200 응답 안에 `RstVal != 200`)에도 예외를 던지지 않고 응답 객체를 그대로 반환한다
+  (네트워크 예외/URI 누락일 때만 `$null`). 여러 호출부가 반환값을 `Out-Null`로 버리거나 확인
+  없이 무조건 "성공" 로그를 남기고 있었다 - 대표 사례가 `CollectDockerMetrics.ps1`(giip 3043
+  당일 작성분)이었다.
+- **원칙**: `Invoke-GiipApiV2`/`Invoke-GiipKvsPut`을 호출하는 모든 코드는 반환값의 `RstVal`을
+  실제로 확인한 뒤에만 성공 로그를 남긴다. 실패 시:
+  1. `Write-GiipLog "ERROR" ...`로 정직하게 남기고
+  2. `lib/Common.ps1`의 `Write-GiipApiFailure` 헬퍼를 사용해 giip 서버에도 보고한다. 이 헬퍼는
+     ERROR 로그 + 기존에 이미 있었지만 어디서도 호출되지 않던 `lib/ErrorLog.ps1`의
+     `sendErrorLog`(`ErrorLogCreate` SP)를 재사용한다 - 새 giipfaw 엔드포인트를 만들지 않았다.
+- **giipfaw `agent-log-*` 계열과의 관계**: `giipfaw/agent-log-ingest`·`agent-log-register` 등은
+  스트림 등록(`streamKey`)과 시퀀스 번호(`fromSequence`/`toSequence`) 추적이 필요한 별도의
+  대용량 로그 라인 수집 파이프라인이다. 단발성 실패 보고에 쓰기엔 새 통합 작업(등록 플로우,
+  회전/시퀀스 관리)이 필요해 이번 범위에서는 채택하지 않았다 - 필요해지면 별도 이슈로 검토.
+- `Invoke-GiipApiV2` 내부 실패 로그 레벨도 DEBUG -> WARN/ERROR로 상향했다(DEBUG로만 남아 사람이
+  보는 로그에 실패가 안 보였던 것이 근본 원인 중 하나였다).
 
 ---
 
