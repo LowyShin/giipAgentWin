@@ -3,8 +3,9 @@
 # Purpose: Windowless replacement for giipAgent3.bat.
 #          Runs git-auto-sync.ps1 (pull latest) then giipAgent3.ps1, all inside
 #          the SAME PowerShell process so no cmd.exe/console window is ever
-#          spawned. Invoked via giipAgent3-silent.vbs (wscript.exe), which is
-#          the actual Task Scheduler action target - see TaskSchdReg.ps1.
+#          spawned. Invoked by Task Scheduler as
+#          "conhost.exe --headless powershell.exe -File giipAgent3-launcher.ps1"
+#          - see TaskSchdReg.ps1.
 #          ("powershell.exe -WindowStyle Hidden" alone can still briefly
 #          flash a console window on some Windows builds/logon types.)
 # ============================================================================
@@ -12,6 +13,18 @@
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
 Set-Location $ScriptDir
+
+# 구 버전 등록(wscript.exe + giipAgent3-silent.vbs)을 쓰는 머신은 git pull 로 vbs 가
+# 사라지면 에이전트가 멈춘다. 이 launcher 가 한 번이라도 실행되면(vbs 경유 포함)
+# 작업을 conhost --headless 방식으로 다시 등록한다.
+try {
+    $regTask = Get-ScheduledTask -TaskName "GIIP Agent Task (v3)" -ErrorAction Stop
+    if ($regTask.Actions[0].Execute -like "*wscript*") {
+        & (Join-Path $ScriptDir "TaskSchdReg.ps1") | Out-Null
+    }
+} catch {
+    Write-Host "WARN: task migration check failed: $_"
+}
 
 # giip #3079 (사용자 지시 2026-09-26): "어떤 상태라도 독립적으로 git pull이 성공해야
 # 해야, 수정된 파일을 각 머신들이 받아서 업데이트하지" - 기존 코드는 이미 sync를

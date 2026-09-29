@@ -21,7 +21,7 @@ giipAgentWin 레포 안에서 **현재 어떤 진입점으로도 도달하지 �
 
 ```
 [Task Scheduler]  "GIIP Agent Task (v3)"  (5분 주기, 현재 유일하게 등록된 작업)
-   └─ wscript.exe giipAgent3-silent.vbs
+   └─ conhost.exe --headless powershell.exe giipAgent3-launcher.ps1
         └─ giipAgent3.ps1                         ← 현재 운영 진입점
              ├─ lib/Common.ps1, lib/Kvs.ps1, lib/ProcessLock.ps1,
              │  lib/SchedulerAgentRegister.ps1, lib/SchedulerAgentRun.ps1
@@ -107,7 +107,8 @@ Windows 에이전트의 **데몬형 진입점**. 프로세스가 죽지 않고 �
   새로 띄우므로 복원력이 높다(참고: `docs/task-scheduler-multiple-instances.md`, giip #2338 의
   giipAgent3 hang 인시던트).
   현재 등록된 작업은 `GIIP Agent Task (v3)` 하나이고, 액션은
-  `wscript.exe "giipAgent3-silent.vbs"` → `giipAgent3.ps1` 이다.
+  `conhost.exe --headless powershell.exe giipAgent3-launcher.ps1` → `giipAgent3.ps1` 이다
+  (2026-07-28~09-29 에는 wscript.exe + vbs 래퍼였으나 보안 프로그램 차단 위험으로 제거).
   - **의도적 대체였는가?** 진입점 전환 자체는 의도적이다(같은 커밋에서 등록 대상을 명시적으로 바꿨다).
     다만 **기능 이식은 완결되지 않았다** — 큐 "실행" 단계에 해당하는
     `giipscripts/modules/CqeRun.ps1` 은 2026-09-15 `f0ebbc5`(giip #2546)에서야 추가됐다.
