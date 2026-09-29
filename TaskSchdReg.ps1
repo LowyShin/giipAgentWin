@@ -6,11 +6,14 @@ Write-Host "Re-registering Task Scheduler for giipAgent3 (5-min interval, silent
 $scriptDir = $PSScriptRoot
 if (-not $scriptDir) { $scriptDir = Get-Location }
 
-# wscript.exe + a .vbs wrapper is used instead of "powershell.exe -WindowStyle Hidden"
-# directly: -WindowStyle Hidden still briefly flashes a console window on some
-# Windows builds/logon types, while WScript.Shell.Run with style 0 never
-# allocates a visible window at all.
-$targetScript = Join-Path $scriptDir "giipAgent3-silent.vbs"
+# "conhost.exe --headless powershell.exe ..." is used instead of
+# "powershell.exe -WindowStyle Hidden": -WindowStyle Hidden still briefly flashes a
+# console window on some Windows builds/logon types, while conhost --headless never
+# creates one. Unlike the former wscript.exe + .vbs wrapper, both binaries are
+# Microsoft-signed and there is no script-host launch that security products flag.
+# LogonType stays Interactive on purpose: ps1ui/cmdui queue scripts (lib/ScriptRunner.ps1)
+# must show a window on the user's desktop, which S4U (session 0) cannot do.
+$targetScript = Join-Path $scriptDir "giipAgent3-launcher.ps1"
 
 if (-not (Test-Path $targetScript)) {
     Write-Error "Target script not found: $targetScript"
@@ -18,7 +21,7 @@ if (-not (Test-Path $targetScript)) {
 }
 
 $taskName = "GIIP Agent Task (v3)"
-$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$targetScript`""
+$action = New-ScheduledTaskAction -Execute "conhost.exe" -Argument "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$targetScript`""
 $trigger = New-ScheduledTaskTrigger -Once -At "00:00" -RepetitionInterval (New-TimeSpan -Minutes 5)
 # Run as current user (Interactive or Background depending on login)
 # For specific User account execution without password, usually requires 'LogonType Interactive' or S4U.
@@ -40,7 +43,7 @@ Write-Host "Task '$taskName' registered successfully to run every 5 minutes." -F
 $autoDiscoverScript = Join-Path $scriptDir "giip-auto-discover-launcher.ps1"
 if (Test-Path $autoDiscoverScript) {
     $autoDiscoverTaskName = "GIIP Auto-Discovery (v3)"
-    $autoDiscoverAction = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$autoDiscoverScript`""
+    $autoDiscoverAction = New-ScheduledTaskAction -Execute "conhost.exe" -Argument "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$autoDiscoverScript`""
     # Run once at startup, then repeat every 6 hours
     $autoDiscoverTrigger = New-ScheduledTaskTrigger -Once -At "00:00" -RepetitionInterval (New-TimeSpan -Hours 6)
     Register-ScheduledTask -TaskName $autoDiscoverTaskName -Action $autoDiscoverAction -Trigger $autoDiscoverTrigger -Principal $principal -Force

@@ -31,8 +31,8 @@
 #     (그보다 앞은 giipAgent.wsf).
 #   - 왜: 상주 데몬 방식을 버리고 Task Scheduler 5분 주기 단발 실행 방식으로
 #     바꿨기 때문이다. 현재 등록된 작업은 'GIIP Agent Task (v3)' 하나이고 그
-#     액션은 wscript.exe + giipAgent3-silent.vbs -> giipAgent3.ps1 이다
-#     (2026-07-28 커밋 82db711 에서 콘솔 창 깜빡임을 없애려 vbs 래퍼로 바뀜).
+#     액션은 conhost.exe --headless powershell.exe giipAgent3-launcher.ps1
+#     -> giipAgent3.ps1 이다 (vbs 래퍼는 보안 프로그램 차단 위험으로 제거).
 #     giipAgent3.ps1 은 Step 1~7 + Step 2.5 를 giipscripts\modules\ 의 개별
 #     모듈로 순차 실행한다.
 #
