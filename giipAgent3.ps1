@@ -81,6 +81,20 @@ if (-not $lockResult.ShouldProceed) {
 
 Write-GiipLog "INFO" "=== giipAgent3.ps1 Started ==="
 
+# 구 등록(wscript.exe + giipAgent3-silent.vbs)을 쓰는 머신 자동 전환. vbs 는 git pull 로 지워지는데
+# 옛 등록은 vbs 를 거쳐야 launcher 에 도달하므로, 전환 코드는 launcher 가 아니라 pull 이후에 실행되는
+# 여기(giipAgent3.ps1)에 있어야 한다. 이미 pull 로 vbs 가 없어져 멈춘 머신은 TaskSchdReg.ps1 을 수동 실행한다.
+try {
+    $regTask = Get-ScheduledTask -TaskName "GIIP Agent Task (v3)" -ErrorAction Stop
+    if ($regTask.Actions[0].Execute -like "*wscript*") {
+        Write-GiipLog "WARN" "Task Scheduler still uses wscript/vbs. Re-registering with conhost --headless..."
+        & (Join-Path $ScriptDir "TaskSchdReg.ps1") | Out-Null
+        Write-GiipLog "INFO" "Task Scheduler re-registered (conhost --headless)."
+    }
+} catch {
+    Write-GiipLog "WARN" "Task Scheduler migration check failed: $($_.Exception.Message)"
+}
+
 # giip #2390: 스케줄러 실행 이력(tSchedulerAgentRun) 부트스트랩 - 락 획득에
 # 성공해 실제로 Step 1~7을 돌릴 시점(위 lockResult.ShouldProceed 체크를 이미
 # 통과한 이후)에만 수행한다. AlreadyRunning/KillFailed로 위에서 이미 exit한

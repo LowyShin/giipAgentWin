@@ -14,18 +14,6 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
 Set-Location $ScriptDir
 
-# 구 버전 등록(wscript.exe + giipAgent3-silent.vbs)을 쓰는 머신은 git pull 로 vbs 가
-# 사라지면 에이전트가 멈춘다. 이 launcher 가 한 번이라도 실행되면(vbs 경유 포함)
-# 작업을 conhost --headless 방식으로 다시 등록한다.
-try {
-    $regTask = Get-ScheduledTask -TaskName "GIIP Agent Task (v3)" -ErrorAction Stop
-    if ($regTask.Actions[0].Execute -like "*wscript*") {
-        & (Join-Path $ScriptDir "TaskSchdReg.ps1") | Out-Null
-    }
-} catch {
-    Write-Host "WARN: task migration check failed: $_"
-}
-
 # giip #3079 (사용자 지시 2026-09-26): "어떤 상태라도 독립적으로 git pull이 성공해야
 # 해야, 수정된 파일을 각 머신들이 받아서 업데이트하지" - 기존 코드는 이미 sync를
 # giipAgent3.ps1 실행 "이전"에 실행해서 에이전트 본 로직(API 호출 등)의 실패가 sync를
