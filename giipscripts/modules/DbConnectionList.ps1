@@ -22,99 +22,98 @@ catch {
 }
 
 # ============================================================================
-# Helper Functions
+# Function: Get-MSSQLConnections
+# Purpose: Collect connection info from MSSQL database
 # ============================================================================
-
 function Get-MSSQLConnections {
     param(
         [Parameter(Mandatory = $true)][string]$DbHost,
         [Parameter(Mandatory = $true)][int]$Port,
         [Parameter(Mandatory = $true)][string]$User,
-        [Parameter(Mandatory = $true)][string]$Pass
+        [Parameter(Mandatory = $true)][string]$Pass,
+        [string]$Database
     )
     
-    $connStr = "Server=$DbHost,$Port;Database=master;User Id=$User;Password=$Pass;TrustServerCertificate=True;Connection Timeout=10;"
-    $conn = New-Object System.Data.SqlClient.SqlConnection($connStr)
+    # NOTE: Named properties (e.g. $builder.DataSource = ...) throw
+    # "Keyword not supported: 'DataSource'" on this host's GAC System.Data.dll
+    # (reproduced in isolation, unrelated to any other module). The indexer
+    # form below hits a different internal code path and works correctly
+    # while still safely escaping special characters (quotes/semicolons) in
+    # the password, same as the property setters were meant to do.
+    $builder = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
+    $builder["Data Source"] = "$DbHost,$Port"
+    if ($Database -and $Database.Trim()) {
+        $builder["Initial Catalog"] = $Database
+    }
+    $builder["User ID"] = $User
+    $builder["Password"] = $Pass
+    $builder["TrustServerCertificate"] = $true
+    $builder["Connect Timeout"] = 10
+    
+    $conn = New-Object System.Data.SqlClient.SqlConnection($builder.ConnectionString)
     $conn.Open()
     
     $connList = @()
+    
     try {
-        # 1. Snapshot Query: Collect active connections and handles (No large text aggregation)
         $cmd = $conn.CreateCommand()
         $cmd.CommandText = @"
             SELECT 
-                s.session_id,
                 c.client_net_address,
-                s.program_name,
-                r.cpu_time,
-                r.start_time as query_start_time,
-                ISNULL(r.sql_handle, c.most_recent_sql_handle) as sql_handle,
-                ISNULL(r.query_hash, qs.query_hash) as query_hash
+                MAX(s.program_name) as program_name,
+                COUNT(*) as conn_count,
+                ISNULL(SUM(r.cpu_time), 0) as cpu_load,
+                MAX(REPLACE(REPLACE(SUBSTRING(t.text, 1, 1000), CHAR(13), ' '), CHAR(10), ' ')) as last_sql,
+                MAX(t.text) as full_sql,
+                CONVERT(NVARCHAR(64), r.query_hash, 1) as query_hash,
+                CONVERT(NVARCHAR(130), r.sql_handle, 1) as sql_handle,
+                MAX(r.start_time) as query_start_time,
+                MAX(s.session_id) as query_id
             FROM sys.dm_exec_connections c
             JOIN sys.dm_exec_sessions s ON c.session_id = s.session_id
             LEFT JOIN sys.dm_exec_requests r ON s.session_id = r.session_id
-            OUTER APPLY (SELECT TOP 1 query_hash FROM sys.dm_exec_query_stats WHERE sql_handle = ISNULL(r.sql_handle, c.most_recent_sql_handle)) qs
+            OUTER APPLY sys.dm_exec_sql_text(r.sql_handle) t
+            GROUP BY c.client_net_address, r.query_hash, r.sql_handle
 "@
-        $snapshot = @()
         $reader = $cmd.ExecuteReader()
+        
+        # [HARDEN] Get Column Mapping to prevent "Property not found" Index errors
+        $colMap = @{}
+        for ($i = 0; $i -lt $reader.FieldCount; $i++) {
+            $colMap[$reader.GetName($i)] = $i
+        }
+
         while ($reader.Read()) {
-            $snapshot += @{
-                session_id         = $reader["session_id"]
-                client_net_address = $reader["client_net_address"]
-                program_name       = $reader["program_name"]
-                cpu_load           = if ($reader["cpu_time"] -isnot [System.DBNull]) { [int]$reader["cpu_time"] } else { 0 }
-                query_start_time   = if ($reader["query_start_time"] -isnot [System.DBNull]) { [DateTime]$reader["query_start_time"] } else { $null }
-                sql_handle         = if ($reader["sql_handle"] -isnot [System.DBNull]) { "0x" + [System.BitConverter]::ToString($reader["sql_handle"]).Replace("-", "") } else { $null }
-                query_hash         = if ($reader["query_hash"] -isnot [System.DBNull]) { "0x" + [System.BitConverter]::ToString($reader["query_hash"]).Replace("-", "") } else { $null }
+            $row = @{}
+            foreach ($name in $colMap.Keys) {
+                $val = $reader.GetValue($colMap[$name])
+                $row[$name] = if ($val -is [System.DBNull]) { $null } else { $val }
             }
+            
+            # Ensure DateTime conversion for specific field
+            if ($row.ContainsKey("query_start_time") -and $row.query_start_time -ne $null) {
+                $row.query_start_time = [DateTime]$row.query_start_time
+            }
+
+            # Schema Sanity: sql_handle & query_hash should always exists in the hashtable
+            if (-not $row.ContainsKey("sql_handle")) { $row["sql_handle"] = $null }
+            if (-not $row.ContainsKey("query_hash")) { $row["query_hash"] = $null }
+
+            $connList += $row
         }
         $reader.Close()
-
-        # 2. Retrieve SQL Text for Unique Handles (Lazy Loading)
-        $sqlCache = @{}
-        $uniqueHandles = $snapshot | Where-Object { $null -ne $_.sql_handle } | Select-Object -ExpandProperty sql_handle -Unique
-        
-        foreach ($handle in $uniqueHandles) {
-            try {
-                $tCmd = $conn.CreateCommand()
-                $tCmd.CommandText = "SELECT text FROM sys.dm_exec_sql_text($handle)"
-                $sqlText = $tCmd.ExecuteScalar()
-                if ($null -ne $sqlText) {
-                    $sqlCache[$handle] = $sqlText
-                }
-            } catch {}
-        }
-
-        # 3. Finalize Data with standard session_id
-        foreach ($s in $snapshot) {
-            $h = $s.sql_handle
-            $fullSql = ""
-            if ($h -and $sqlCache.ContainsKey($h)) { $fullSql = $sqlCache[$h] }
-            
-            $lastSql = ""
-            if ($fullSql) { 
-                $lastSql = $fullSql.Substring(0, [Math]::Min(1000, $fullSql.Length)).Replace("`r", " ").Replace("`n", " ") 
-            }
-
-            $connList += @{
-                session_id         = $s.session_id
-                client_net_address = $s.client_net_address
-                program_name       = $s.program_name
-                cpu_load           = $s.cpu_load
-                last_sql           = $lastSql
-                full_sql           = $fullSql
-                query_hash         = $s.query_hash
-                sql_handle         = $s.sql_handle
-                query_start_time   = $s.query_start_time
-            }
-        }
     }
     finally {
-        if ($null -ne $conn) { $conn.Close() }
+        $conn.Close()
     }
+    
     return $connList
 }
 
+# ============================================================================
+# Function: Get-MySQLConnections
+# Purpose: Collect connection info from MySQL database (Aligns with Linux Agent)
+# ============================================================================
 function Get-MySQLConnections {
     param(
         [Parameter(Mandatory = $true)][string]$DbHost,
@@ -124,26 +123,27 @@ function Get-MySQLConnections {
     )
 
     if (-not (Import-MySqlDll -LibDir $LibDir)) {
-        Write-GiipLog "WARN" "[DbConnectionList] MySql.Data.dll not found."
+        Write-GiipLog "WARN" "[DbConnectionList] Skipped MySQL ${DbHost}: MySql.Data.dll not found."
         return @()
     }
 
-    $connList = @()
     try {
         $connStr = "Server=$DbHost;Port=$Port;Uid=$User;Pwd=$Pass;SslMode=None;Connection Timeout=10;"
         $conn = New-Object MySql.Data.MySqlClient.MySqlConnection($connStr)
         $conn.Open()
         
+        $connList = @()
         $cmd = $conn.CreateCommand()
+        # information_schema.processlist is standard for session monitoring
         $cmd.CommandText = "SELECT id, host, user, db, command, time, info FROM information_schema.processlist WHERE command != 'Sleep' AND user NOT IN ('system user', 'event_scheduler')"
         $reader = $cmd.ExecuteReader()
+        
         while ($reader.Read()) {
             $hostStr = $reader["host"]
             $clientIp = if ($hostStr -match ':') { $hostStr.Split(":")[0] } else { $hostStr }
             $sqlText = if ($reader["info"] -isnot [System.DBNull]) { $reader["info"] } else { "" }
             
             $connList += @{
-                session_id         = $reader["id"]
                 client_net_address = $clientIp
                 login_name         = $reader["user"]
                 program_name       = $reader["command"]
@@ -153,22 +153,39 @@ function Get-MySQLConnections {
                 last_sql           = $sqlText
                 full_sql           = $sqlText
                 query_hash         = Get-StringMd5 -InputString $sqlText
+                query_id           = $reader["id"]
                 query_start_time   = (Get-Date).AddSeconds(-[int]$reader["time"])
+                # [SCHEMA] Ensure parity with MSSQL fields to prevent property-not-found errors
+                sql_handle         = $null
+                plan_handle        = $null
             }
         }
         $reader.Close()
         $conn.Close()
+        return $connList
     }
     catch {
         Write-GiipLog "WARN" "[DbConnectionList] MySQL Error for ${DbHost}: $_"
+        return @()
     }
-    return $connList
 }
 
+# ============================================================================
+# Function: Send-ConnectionData
+# Purpose: Send connection data to API
+# ============================================================================
 function Send-ConnectionData {
-    param($Config, $MdbId, $ConnList)
+    param(
+        [Parameter(Mandatory = $true)]$Config,
+        [Parameter(Mandatory = $true)][int]$MdbId,
+        [Parameter(Mandatory = $true)][array]$ConnList
+    )
+    
     if ($ConnList.Count -eq 0) { return $false }
     
+    Write-GiipLog "INFO" "[DbConnectionList] Sending $($ConnList.Count) connections for DB: $MdbId"
+    
+    # Strip full_sql before uploading standard db_connections payload
     $cleanList = @()
     foreach ($c in $ConnList) {
         $clone = $c.Clone()
@@ -177,79 +194,74 @@ function Send-ConnectionData {
     }
     
     $response = Invoke-GiipKvsPut -Config $Config -Type "database" -Key "$MdbId" -Factor "db_connections" -Value $cleanList
-    return ($null -ne $response -and $response.RstVal -eq "200")
-}
-
-function Upload-TopQueries {
-    param($Config, $Db, $ConnList)
     
-    $topQueries = $ConnList | Where-Object { -not [string]::IsNullOrWhiteSpace($_.query_hash) -and -not [string]::IsNullOrWhiteSpace($_.full_sql) } | Sort-Object -Property cpu_load -Descending | Select-Object -First 20
-    
-    foreach ($q in $topQueries) {
-        $qHash = $q.query_hash
-        if (-not $Global:UploadedHashes.ContainsKey($qHash)) {
-            $Global:UploadedHashes[$qHash] = $true
-            $qFullText = $q.full_sql
-            $qCsnStr = if ($Db.csn) { [string]$Db.csn } else { "global" }
-            
-            Invoke-GiipKvsPut -Config $Config -Type "query" -Key $qHash -Factor $qCsnStr -Value $qFullText | Out-Null
-            Write-GiipLog "DEBUG" "[DbConnectionList] Uploaded full text for $qHash"
-        }
+    if ($null -eq $response -or $response.RstVal -ne "200") {
+        Write-GiipLog "WARN" "[DbConnectionList] API Error for DB ${MdbId}: $($response.RstMsg)"
+        return $false
     }
-}
-
-function Process-SingleMdb {
-    param($Config, $Db)
-    try {
-        $connections = @()
-        if ($Db.db_type -eq 'MSSQL') {
-            $connections = Get-MSSQLConnections -DbHost $Db.db_host -Port $Db.db_port -User $Db.db_user -Pass $Db.db_password
-        }
-        elseif ($Db.db_type -match 'MySQL|MariaDB') {
-            $connections = Get-MySQLConnections -DbHost $Db.db_host -Port $Db.db_port -User $Db.db_user -Pass $Db.db_password
-        }
-
-        if ($connections.Count -gt 0) {
-            # 1. Main Connection Data
-            if (Send-ConnectionData -Config $Config -MdbId $Db.mdb_id -ConnList $connections) {
-                # 2. Stats & Debug Logging
-                $hasHashCount = ($connections | Where-Object { -not [string]::IsNullOrWhiteSpace($_.query_hash) }).Count
-                $activeCount = ($connections | Where-Object { $_.cpu_load -gt 0 }).Count
-                
-                Write-GiipLog "INFO" "[DbConnectionList] DB ID $($Db.mdb_id): Total=$($connections.Count), Active=$activeCount, HasHash=$hasHashCount"
-                
-                if ($activeCount -gt 0 -and $hasHashCount -eq 0) {
-                    $debugInfo = @{
-                        mdb_id = $Db.mdb_id
-                        active_count = $activeCount
-                        total_count = $connections.Count
-                        reason = "query_hash missing for active queries. Check VIEW SERVER STATE perm."
-                    }
-                    sendErrorLog -Config $Config -Message "query_hash collection failed" -InputValues $debugInfo -Severity "error" -ErrorType "CollectionGap"
-                }
-
-                # 3. Top Query Full Text
-                Upload-TopQueries -Config $Config -Db $Db -ConnList $connections
-            }
-        }
-    }
-    catch {
-        Write-GiipLog "WARN" "[DbConnectionList] Failed for $($Db.db_host): $_"
-    }
+    return $true
 }
 
 # ============================================================================
-# Entry Point
+# Main Logic
 # ============================================================================
 try {
     $Config = Get-GiipConfig
     Write-GiipLog "INFO" "[DbConnectionList] Starting..."
 
-    $apiRes = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData (@{ lssn = $Config.lssn } | ConvertTo-Json -Compress)
+    # 1. Get DB List from API
+    $reqJson = @{ lssn = $Config.lssn } | ConvertTo-Json -Compress
+    $apiRes = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson -RawList
+
     $dbList = if ($apiRes.data) { $apiRes.data } else { @() }
-    
+    if ($dbList.Count -eq 0) {
+        Write-GiipLog "INFO" "[DbConnectionList] No databases found."
+        exit 0
+    }
+
+    # 2. Process Each Database
     foreach ($db in $dbList) {
-        Process-SingleMdb -Config $Config -Db $db
+        try {
+            $connections = @()
+            if ($db.db_type -eq 'MSSQL') {
+                $dbName = if ($db.db_database) { $db.db_database } elseif ($db.db_name) { $db.db_name } else { $null }
+                $connections = Get-MSSQLConnections -DbHost $db.db_host -Port $db.db_port -User $db.db_user -Pass $db.db_password -Database $dbName
+            }
+            elseif ($db.db_type -match 'MySQL|MariaDB') {
+                $connections = Get-MySQLConnections -DbHost $db.db_host -Port $db.db_port -User $db.db_user -Pass $db.db_password
+            }
+
+            if ($connections.Count -gt 0) {
+                Send-ConnectionData -Config $Config -MdbId $db.mdb_id -ConnList $connections | Out-Null
+                
+                # [NEW] Upload Top 20 Query Hashes for Net3D View Full Query
+                $topQueries = $connections | Where-Object { -not [string]::IsNullOrWhiteSpace($_.query_hash) -and -not [string]::IsNullOrWhiteSpace($_.full_sql) } | Sort-Object -Property cpu_load -Descending | Select-Object -First 20
+                
+                foreach ($q in $topQueries) {
+                    $qHash = $q.query_hash
+                    if (-not $Global:UploadedHashes.ContainsKey($qHash)) {
+                        $Global:UploadedHashes[$qHash] = $true
+                        $fullText = $q.full_sql
+                        if ($fullText.Length -gt 20000) { $fullText = $fullText.Substring(0, 20000) }
+                        
+                        # giip #3079: 반환값을 Out-Null로 버리고 무조건 "Uploaded" 로그를
+                        # 남기던 버그. RstVal을 실제로 확인한다.
+                        $ftResp = Invoke-GiipKvsPut -Config $Config -Type "query" -Key $qHash -Factor "full_text" -Value $fullText
+                        if ($ftResp -and $ftResp.RstVal -eq "200") {
+                            Write-GiipLog "DEBUG" "[DbConnectionList] Uploaded full text for query $qHash"
+                        } else {
+                            Write-GiipApiFailure -Config $Config -Context "[DbConnectionList] full_text upload (query=$qHash)" -Response $ftResp
+                        }
+                    }
+                }
+            }
+        }
+        catch {
+            # Enhanced Logging: Capture full exception detail
+            $errMsg = if ($_.Exception) { $_.Exception.Message } else { $_.ToString() }
+            $errType = if ($_.Exception) { $_.Exception.GetType().Name } else { "UnknownException" }
+            Write-GiipLog "WARN" "[DbConnectionList] Failed for $($db.db_host): [$errType] $errMsg"
+        }
     }
 
     Write-GiipLog "INFO" "[DbConnectionList] Completed."
@@ -259,3 +271,4 @@ catch {
     exit 1
 }
 exit 0
+

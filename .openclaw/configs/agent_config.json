@@ -1,0 +1,9 @@
+﻿{
+    "features":  {
+                     "auto_update":  false,
+                     "enable_metrics":  true
+                 },
+    "sync_interval_sec":  300,
+    "log_level":  "INFO",
+    "agent_name":  "Local_Openclaw_Agent"
+}
