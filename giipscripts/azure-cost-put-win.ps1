@@ -1,0 +1,605 @@
+﻿# ============================================================================
+# azure-cost-put-win.ps1
+# Purpose : Collect Azure usage & cost via Azure Cost Management API (az rest),
+#           save as JSON, and push the summary to GIIP KVS (kFactor="azure_cost").
+# Runs    : Standalone / independent of giipAgent3.ps1 module chain.
+#           Register as its own daily Scheduled Task with -Register.
+# Auth    : Uses the current 'az login' context, OR a service principal from
+#           giipAgent.cfg (az_client_id / az_client_secret / az_tenant_id).
+# API     : POST .../providers/Microsoft.CostManagement/query (works for MCA/EA/PAYG;
+#           az consumption usage list returns 'None' costs on MCA and is NOT used).
+# KVS     : lib/Kvs.ps1 -> Invoke-GiipKvsPut. jsondata MUST carry kValue (real data),
+#           otherwise the server stores an empty {} while returning 200 (silent loss).
+# ============================================================================
+
+[CmdletBinding()]
+param(
+    [switch]$Register,               # Register a daily Scheduled Task and exit
+    [string]$AtTime = "09:30",       # Daily run time (for -Register). giip #1919 (2026-09-02): moved
+                                      # from 06:00 to 09:30 KST -- 06:00 KST = 21:00 UTC the PREVIOUS day,
+                                      # so on the 1st of every month the MonthToDate query (UTC calendar)
+                                      # hadn't rolled over yet and returned ~last month's total mislabeled
+                                      # as day-1 (see "월 경계 MonthToDate 미반영 버그" note near Query #1).
+                                      # 09:30 KST = 00:30 UTC, safely after the UTC-midnight rollover.
+    [string]$SubscriptionId,         # Target subscription (else cfg az_subscription / current)
+    [int]$Days = 0,                  # Last N days (Custom); 0 = MonthToDate
+                                      # WARNING (giip-762, 2026-07-26): -Days>0 with the default -Factor
+                                      # overwrites the SAME KVS coordinate the daily 09:30 job uses, which
+                                      # hides the "월말 예상" projection card on azure-cost until the next
+                                      # MonthToDate run. For ad-hoc/debug runs, pass a different -Factor
+                                      # (e.g. azure_cost_test) instead of the production one.
+    [string]$Factor = "azure_cost",  # KVS kFactor
+    [string]$OutFile,                # Raw JSON output path (else giipLogs\azure\...)
+
+    # --- giip #2604: 수집 직후 MQE(tMQLog) 일일 증감 보고 --------------------
+    [switch]$SkipMqeReport,               # 지정하면 MQE 보고를 건너뛴다(테스트/디버그 실행용)
+    [double]$AlertThresholdPercent = -1,  # 급증 알람 임계(%). -1 = cfg azure_cost_alert_pct > 기본 10
+    [string]$MqeTo = "",                  # 비우면 cfg mqe_to, 그것도 없으면 mqTo 미지정(csn 기본 수신처)
+    [string]$MqeType = "slack",           # csn 47 기존 관례(tMQENotificationConfig.mqType='slack')
+    [string]$MqeSk = ""                   # 비우면 cfg sk. **이 SK 가 곧 보고서가 들어갈 cSn 을 결정한다.**
+)
+
+$ErrorActionPreference = "Stop"
+# Keep native command stderr as captured text so retry logic can inspect it.
+if ($null -ne (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue)) {
+    $PSNativeCommandUseErrorActionPreference = $false
+}
+
+# --- Resolve paths and load shared libraries ---------------------------------
+$ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
+$AgentRoot = Split-Path -Path $ScriptDir -Parent            # giipscripts -> giipAgentWin
+$LibDir    = Join-Path $AgentRoot "lib"
+$Global:BaseDir = $AgentRoot                                # so Get-GiipConfig finds ../giipAgent.cfg
+
+. (Join-Path $LibDir "Common.ps1")   # Get-GiipConfig, Invoke-GiipApiV2, Write-GiipLog
+. (Join-Path $LibDir "Kvs.ps1")      # Invoke-GiipKvsPut
+. (Join-Path $LibDir "Mqe.ps1")            # giip #2604: Invoke-GiipMqLogPut (tMQLog 등록)
+. (Join-Path $LibDir "AzureCostReport.ps1") # giip #2604: Send-AzureCostDeltaReport (증감 계산·보고)
+
+# --- Persistent run log for Task Scheduler diagnostics -----------------------
+$AzLogDir = Join-Path $AgentRoot "..\giipLogs\azure"
+if (-not (Test-Path $AzLogDir)) { New-Item -Path $AzLogDir -ItemType Directory -Force | Out-Null }
+$RunLogFile = Join-Path $AzLogDir ("azure_cost_task_{0}.log" -f (Get-Date).ToString("yyyyMMdd"))
+
+function Write-TaskLog {
+    param(
+        [Parameter(Mandatory)][string]$Level,
+        [Parameter(Mandatory)][string]$Message
+    )
+    $line = "[{0}] [{1}] {2}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Level, $Message
+    Write-GiipLog $Level $Message
+    Add-Content -Path $RunLogFile -Value $line -Encoding UTF8
+}
+
+# --- -Register: install a daily Scheduled Task for this script and exit -------
+if ($Register) {
+    $self = $MyInvocation.MyCommand.Path
+    $taskName = "GIIP Azure Cost Collector"
+    $arg = "-NoProfile -WindowStyle Hidden -NonInteractive -ExecutionPolicy Bypass -File `"$self`""
+    $action    = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $arg
+    $trigger   = New-ScheduledTaskTrigger -Daily -At $AtTime
+    $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
+    Write-TaskLog "INFO" "Registered Scheduled Task '$taskName' (daily at $AtTime)."
+    return
+}
+
+# --- Self-update: 이 스크립트는 fleet(real 브랜치) 배포 대상이 아니라 이 PC(Lowy-DP01)
+# 전용 standalone 수집기이므로, origin/main 대비 fast-forward 자동 pull로 최신 코드를
+# 유지한다. giip #1956/#2054: 로컬 체크아웃이 며칠간 뒤처져 AzureCostSnapshotSync 호출이
+# 반영 안 된 채 조용히 스킵되던 사고 재발 방지. 실패해도 수집 자체는 막지 않는다(WARN-only).
+try {
+    $gitDir = Join-Path $AgentRoot ".git"
+    if (Test-Path $gitDir) {
+        Push-Location $AgentRoot
+        try {
+            $dirty = (git status --porcelain 2>$null)
+            if ([string]::IsNullOrWhiteSpace($dirty)) {
+                git fetch origin main --quiet 2>$null
+                $behind = (git rev-list --count "HEAD..origin/main" 2>$null)
+                if ($behind -and [int]$behind -gt 0) {
+                    $before = (git rev-parse --short HEAD)
+                    git pull --ff-only origin main --quiet 2>$null
+                    if ($LASTEXITCODE -eq 0) {
+                        $after = (git rev-parse --short HEAD)
+                        Write-TaskLog "INFO" "Self-update: $before -> $after ($behind commit(s) pulled from origin/main)"
+                    } else {
+                        Write-TaskLog "WARN" "Self-update: git pull --ff-only failed (exit $LASTEXITCODE); continuing with current checkout."
+                    }
+                }
+            } else {
+                Write-TaskLog "WARN" "Self-update skipped: local checkout has uncommitted changes."
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+} catch {
+    Write-TaskLog "WARN" "Self-update check failed: $($_.Exception.Message)"
+}
+
+try {
+
+# --- Load config -------------------------------------------------------------
+$Config = Get-GiipConfig
+if (-not $Config.lssn) { Write-TaskLog "ERROR" "lssn missing in giipAgent.cfg. Aborting."; exit 1 }
+
+# --- Ensure Azure CLI is available -------------------------------------------
+if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
+    Write-TaskLog "ERROR" "Azure CLI (az) not found in PATH. Install it or run 'az login' first."
+    exit 1
+}
+
+# --- Optional: service-principal login (non-interactive scheduled runs) -------
+if ($Config.az_client_id -and $Config.az_client_secret -and $Config.az_tenant_id) {
+    Write-TaskLog "INFO" "Logging in with service principal ($($Config.az_client_id))."
+    az login --service-principal --username $Config.az_client_id --password $Config.az_client_secret --tenant $Config.az_tenant_id --only-show-errors --output none
+    if ($LASTEXITCODE -ne 0) { Write-TaskLog "ERROR" "az service-principal login failed."; exit 1 }
+}
+
+# --- Resolve subscription ----------------------------------------------------
+if (-not $SubscriptionId) { $SubscriptionId = $Config.az_subscription }
+if ($SubscriptionId) {
+    az account set --subscription $SubscriptionId --only-show-errors
+    if ($LASTEXITCODE -ne 0) { Write-TaskLog "ERROR" "az account set failed for $SubscriptionId."; exit 1 }
+}
+$acct = az account show --only-show-errors --output json 2>$null | ConvertFrom-Json
+if (-not $acct) { Write-TaskLog "ERROR" "No active Azure account. Run 'az login' or set service-principal creds."; exit 1 }
+$subId   = $acct.id
+$subName = $acct.name
+
+# --- Resolve shared timeframe once (both axes use the same period) ------------
+# 월 경계 MonthToDate 미반영 버그 (giip #1919, 2026-09-02 discovered/fixed):
+# Cost Management's "MonthToDate" timeframe rolls over on the UTC calendar, not KST.
+# The daily job used to run at 06:00 KST = 21:00 UTC of the PREVIOUS day. On the 1st
+# of a month that means the MonthToDate query still executes before the UTC month
+# has rolled over, so it returns ~all of LAST month's accumulated cost -- which the
+# script then labels with TODAY's (the 1st's) date/collected_at. Evidence (raw JSON
+# properties.rows PreTaxCost sums, no reset across the boundary):
+#   azure_cost_..._20260730.json -> 964,949
+#   azure_cost_..._20260731.json -> 998,373
+#   azure_cost_..._20260801.json -> 1,044,589   (still climbing -- July's total, not a fresh August MTD)
+# Real-world impact: the live KVS 9/1 record carried ~all of August's cost
+# (total_pretax_cost=1,383,717.8157) mislabeled as September 1st, which fed
+# giipv3 azure-cost's "월말 예상" projection (total × days-in-month ÷ day-of-month,
+# spec §12.7) and inflated it to ~41.51M KRW (actual monthly run-rate: ~1.1-1.4M KRW).
+# Fix: move the daily schedule from 06:00 to 09:30 KST (= 00:30 UTC, safely after
+# the UTC-midnight rollover) -- see the -AtTime default below.
+$today = Get-Date
+if ($Days -gt 0) {
+    $from = $today.AddDays(-$Days).ToString("yyyy-MM-ddT00:00:00+00:00")
+    $to   = $today.ToString("yyyy-MM-ddT23:59:59+00:00")
+    $timeframe  = "Custom"
+    $timePeriod = @{ from = $from; to = $to }
+    $periodDesc = "$from .. $to"
+} else {
+    $timeframe  = "MonthToDate"
+    $timePeriod = $null
+    $periodDesc = "MonthToDate"
+}
+
+$url = "https://management.azure.com/subscriptions/$subId/providers/Microsoft.CostManagement/query?api-version=2023-11-01"
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+# --- Cost Management query helper (grouped by 1-2 dimensions) ------------------
+# Runs one ActualCost query grouped by $GroupDimensions over the shared timeframe.
+# Cost Management's `grouping` array accepts up to 2 entries per query (Query -
+# Usage REST API spec), so a two-dimension request (e.g. ResourceGroupName +
+# ServiceName) returns both columns in the same row set instead of two calls.
+# Cost Management enforces strict 429 rate limits -> retry up to 5x, growing backoff.
+# az rest --body @file avoids shell-quoting issues (BOM-less UTF-8 temp file).
+# Returns @{ Raw = <json string>; Result = <parsed object> } on success, or $null on
+# failure so every caller (all three axes, as of giip #1919) can degrade gracefully
+# via carry-forward instead of losing axes that already succeeded (giip #873 — a 429
+# on query #2/#3 used to exit 1 and drop the already-collected/saved service-axis
+# data along with it; giip #1919 extended this to the ServiceName axis itself,
+# which previously used -Required to hard-exit(1) and lose the ENTIRE run).
+function Invoke-CmQuery {
+    param(
+        [Parameter(Mandatory)][string[]]$GroupDimensions
+    )
+
+    $label = $GroupDimensions -join "+"
+    $dataset = @{
+        granularity = "None"
+        aggregation = @{ totalCost = @{ name = "PreTaxCost"; function = "Sum" } }
+        grouping    = @( $GroupDimensions | ForEach-Object { @{ type = "Dimension"; name = $_ } } )
+    }
+    $bodyObj = @{ type = "ActualCost"; timeframe = $timeframe; dataset = $dataset }
+    if ($timePeriod) { $bodyObj.timePeriod = $timePeriod }
+    $bodyJson = $bodyObj | ConvertTo-Json -Depth 10 -Compress
+
+    $tmpBody = Join-Path $env:TEMP ("az_cm_body_{0}_{1}.json" -f ($label -replace '\+', '_'), $today.ToString("yyyyMMddHHmmssfff"))
+    [System.IO.File]::WriteAllText($tmpBody, $bodyJson, $utf8NoBom)
+
+    Write-TaskLog "INFO" "Querying Cost Management ($label) for $subName ($subId): $periodDesc"
+    $rawJson = $null
+    $sleepSec = 30
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        $tmpOut = Join-Path $env:TEMP ("az_cm_out_{0}_{1}.txt" -f ($label -replace '\+', '_'), $today.ToString("yyyyMMddHHmmssfff"))
+        $tmpErr = Join-Path $env:TEMP ("az_cm_err_{0}_{1}.txt" -f ($label -replace '\+', '_'), $today.ToString("yyyyMMddHHmmssfff"))
+
+        $proc = Start-Process -FilePath "az" -ArgumentList @(
+            "rest",
+            "--method", "post",
+            "--url", $url,
+            "--headers", "Content-Type=application/json",
+            "--body", "@$tmpBody",
+            "--only-show-errors",
+            "--output", "json"
+        ) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tmpOut -RedirectStandardError $tmpErr
+
+        $outText = if (Test-Path $tmpOut) { Get-Content -Path $tmpOut -Raw -ErrorAction SilentlyContinue } else { "" }
+        $errText = if (Test-Path $tmpErr) { Get-Content -Path $tmpErr -Raw -ErrorAction SilentlyContinue } else { "" }
+        Remove-Item $tmpOut, $tmpErr -ErrorAction SilentlyContinue
+
+        $rawJson = ("$outText`n$errText").Trim()
+        $nativeCode = $proc.ExitCode
+
+        if ($nativeCode -eq 0 -and $rawJson -notmatch '429|Too Many Requests') { break }
+        if ($rawJson -match '429|Too Many Requests') {
+            Write-TaskLog "WARN" "Rate-limited (429) on $label. Retry $attempt/5 after ${sleepSec}s."
+            Start-Sleep -Seconds $sleepSec
+            $sleepSec = [Math]::Min($sleepSec + 15, 90)
+            continue
+        }
+        Write-TaskLog "ERROR" "Cost Management query ($label) failed: $rawJson"
+        Remove-Item $tmpBody -ErrorAction SilentlyContinue
+        return $null
+    }
+    Remove-Item $tmpBody -ErrorAction SilentlyContinue
+    if (-not $rawJson -or $rawJson -match '429|Too Many Requests') {
+        Write-TaskLog "ERROR" "Cost Management query ($label) still failing (429) after 5 retries."
+        return $null
+    }
+
+    try {
+        $parsed = $rawJson | ConvertFrom-Json
+    } catch {
+        Write-TaskLog "ERROR" "Cost Management response parse failed ($label): $rawJson"
+        if ($Required) { exit 1 }
+        return $null
+    }
+
+    return @{ Raw = $rawJson; Result = $parsed }
+}
+
+# --- Query #1: by ServiceName (existing axis -> by_service) -------------------
+# giip #1919: no longer -Required / hard exit(1) on failure. A full 429 exhaustion
+# used to kill the ENTIRE run (all three axes) even though the ResourceGroupName
+# axes below already had carry-forward (giip #1028/#1067) -- real incident: 5 of
+# the last 20 days (8/17, 8/26, 8/30, 8/31, 9/2) lost the whole day's KVS update
+# this way. Same carry-forward pattern as the RG axes is applied in the Summarize
+# section below (Get-PreviousAzureCostValue, defined further down, is shared
+# across all three axes and only fetches KVS once).
+$svcQ = Invoke-CmQuery -GroupDimensions @("ServiceName")
+
+$rawJson = $null
+$rows    = @()
+$iSvc = -1; $iCost = -1; $iCur = -1
+if ($svcQ) {
+    $rawJson = $svcQ.Raw
+    $result  = $svcQ.Result
+    $cols = @($result.properties.columns.name)
+    $rows = @($result.properties.rows)
+
+    $iCost = [array]::IndexOf($cols, "PreTaxCost")
+    $iSvc  = [array]::IndexOf($cols, "ServiceName")
+    $iCur  = [array]::IndexOf($cols, "Currency")
+    if ($iCost -lt 0) { Write-TaskLog "ERROR" "Unexpected response shape (no PreTaxCost column)."; exit 1 }
+
+    # --- Save raw JSON (UTF-8, no BOM) — service-axis dump is the canonical raw ----
+    if (-not $OutFile) {
+        $azDir = Join-Path $AgentRoot "..\giipLogs\azure"
+        if (-not (Test-Path $azDir)) { New-Item -Path $azDir -ItemType Directory -Force | Out-Null }
+        $OutFile = Join-Path $azDir ("azure_cost_{0}_{1}.json" -f $subId, $today.ToString("yyyyMMdd"))
+    }
+    [System.IO.File]::WriteAllText($OutFile, $rawJson, $utf8NoBom)
+    Write-TaskLog "INFO" "Saved raw cost JSON ($($rows.Count) service rows) -> $OutFile"
+} else {
+    Write-TaskLog "WARN" "ServiceName query failed after retries; attempting carry-forward from last KVS record (giip #1919)."
+}
+
+# --- Carry-forward helper (giip #1028) -----------------------------------------
+# giip #873 stopped a 429 on the RG axes from exit 1'ing and losing the whole run's
+# data. But it still pushes an EMPTY by_resource_group/by_resource_group_service to
+# the SAME KVS coordinate the azure-cost page reads (KVSFactorLast = latest record
+# only) -- so a persistent 429 day silently blanks the "리소스 그룹별" tab even though
+# yesterday's RG breakdown is still perfectly valid (real incident: lssn 71197,
+# 2026-08-11 06:00 run, 10 retries/~11min across both RG queries, all 429).
+# Fix: when an RG-axis query is exhausted, fetch the last-known-good KVS record and
+# carry its RG-axis arrays forward (tagged with *_stale_since = the ORIGINAL
+# collection time of that data, not today) instead of overwriting good data with [].
+$prevKvsValue = $null
+$prevKvsFetchAttempted = $false
+function Get-PreviousAzureCostValue {
+    if ($script:prevKvsFetchAttempted) { return $script:prevKvsValue }
+    $script:prevKvsFetchAttempted = $true
+    try {
+        $jsonData = (@{ kType = "lssn"; kKey = "$($Config.lssn)"; kFactor = $Factor } | ConvertTo-Json -Compress)
+        $resp = Invoke-GiipApiV2 -Config $Config -CommandText "KVSFactorLast kType kKey kFactor" -JsonData $jsonData -RawList
+        $rec = if ($resp -and $resp.data -and @($resp.data).Count -gt 0) { @($resp.data)[0] } else { $null }
+        if (-not $rec -or -not $rec.kValue) { $script:prevKvsValue = $null; return $null }
+        $script:prevKvsValue = ($rec.kValue | ConvertFrom-Json)
+    } catch {
+        Write-TaskLog "WARN" "Fetching previous KVS record for RG carry-forward failed: $($_.Exception.Message)"
+        $script:prevKvsValue = $null
+    }
+    return $script:prevKvsValue
+}
+
+# --- Query #2: by ResourceGroupName (new axis -> by_resource_group) -----------
+# Feeds giipv3 azure-cost page (by_resource_group[{resource_group,cost}] + resource_group_count).
+# Optional (giip #873): if this axis keeps failing (429 exhausted), degrade to an
+# empty axis and still push the service-axis data already collected above, instead
+# of exit 1'ing and losing everything for the day.
+$rgQ = Invoke-CmQuery -GroupDimensions @("ResourceGroupName")
+
+$byResourceGroup = @()
+if ($rgQ) {
+    $rgResult = $rgQ.Result
+    $rgCols   = @($rgResult.properties.columns.name)
+    $rgRows   = @($rgResult.properties.rows)
+    $iRgCost  = [array]::IndexOf($rgCols, "PreTaxCost")
+    $iRg      = [array]::IndexOf($rgCols, "ResourceGroupName")
+    if ($iRg -lt 0) { $iRg = [array]::IndexOf($rgCols, "ResourceGroup") }  # API shape fallback
+
+    if ($iRgCost -ge 0) {
+        $rgList = foreach ($row in $rgRows) {
+            $rgName = if ($iRg -ge 0 -and $row[$iRg]) { [string]$row[$iRg] } else { "" }
+            [PSCustomObject]@{
+                resource_group = if ($rgName) { $rgName } else { "(unassigned)" }  # costs with no RG
+                cost           = [math]::Round([double]$row[$iRgCost], 4)
+            }
+        }
+        $byResourceGroup = @($rgList | Sort-Object cost -Descending)
+    } else {
+        Write-TaskLog "WARN" "ResourceGroupName query returned no PreTaxCost column; by_resource_group left empty."
+    }
+} else {
+    Write-TaskLog "WARN" "ResourceGroupName query failed after retries; attempting carry-forward from last KVS record (service-axis data still pushed)."
+    $prevForRg = Get-PreviousAzureCostValue
+    $prevRgList = @($prevForRg.by_resource_group)
+    if ($prevForRg -and $prevRgList.Count -gt 0) {
+        $byResourceGroup = $prevRgList
+        $rgStaleSince = if ($prevForRg.by_resource_group_stale_since) { $prevForRg.by_resource_group_stale_since } else { $prevForRg.collected_at }
+        Write-TaskLog "WARN" "Carried forward $($byResourceGroup.Count) resource-group rows from $rgStaleSince (429 exhausted for today's run)."
+    } else {
+        # giip #1067: no prior KVS record to carry forward (new csn/subscription, or first
+        # collection ever exhausted 429) -- by_resource_group is genuinely empty *because the
+        # query failed*, not because the subscription has zero RG cost. Flag it so the page
+        # can tell "수집 실패" apart from "정상적으로 0건"(real incident: lssn 71197, 2026-08-13
+        # 06:06:50, this exact branch hit in production).
+        $rgCollectionFailed = $true
+        Write-TaskLog "WARN" "No previous by_resource_group available to carry forward; by_resource_group left empty for this run."
+    }
+}
+Write-TaskLog "INFO" "Collected $($byResourceGroup.Count) resource-group rows."
+
+# --- Query #3: by ResourceGroupName + ServiceName (cross axis, giip #766) -----
+# Matches the Azure Portal Cost Analysis view ("group by resource group, then
+# service"): for each RG, the list of services and their cost. A single query
+# with a 2-entry grouping array returns both dimensions per row (Query - Usage
+# REST API: grouping accepts up to 2 dimensions), so no extra per-RG calls or
+# 429 risk are introduced versus the by_resource_group axis above.
+# Optional (giip #873): same graceful-degradation treatment as query #2.
+$rgSvcQ = Invoke-CmQuery -GroupDimensions @("ResourceGroupName", "ServiceName")
+
+$byResourceGroupService = @()
+if ($rgSvcQ) {
+    $rgSvcResult = $rgSvcQ.Result
+    $rgSvcCols   = @($rgSvcResult.properties.columns.name)
+    $rgSvcRows   = @($rgSvcResult.properties.rows)
+    $iRgSvcCost  = [array]::IndexOf($rgSvcCols, "PreTaxCost")
+    $iRgSvcRg    = [array]::IndexOf($rgSvcCols, "ResourceGroupName")
+    if ($iRgSvcRg -lt 0) { $iRgSvcRg = [array]::IndexOf($rgSvcCols, "ResourceGroup") }  # API shape fallback
+    $iRgSvcSvc   = [array]::IndexOf($rgSvcCols, "ServiceName")
+
+    if ($iRgSvcCost -ge 0) {
+        $rgSvcFlat = foreach ($row in $rgSvcRows) {
+            $rgName  = if ($iRgSvcRg -ge 0 -and $row[$iRgSvcRg]) { [string]$row[$iRgSvcRg] } else { "" }
+            $svcName = if ($iRgSvcSvc -ge 0 -and $row[$iRgSvcSvc]) { [string]$row[$iRgSvcSvc] } else { "All" }
+            [PSCustomObject]@{
+                resource_group = if ($rgName) { $rgName } else { "(unassigned)" }
+                service        = $svcName
+                cost           = [math]::Round([double]$row[$iRgSvcCost], 4)
+            }
+        }
+        $rgGroups = @($rgSvcFlat | Group-Object resource_group)
+
+        $rgSvcSummaries = foreach ($grp in $rgGroups) {
+            $svcRows = @($grp.Group | Sort-Object cost -Descending)
+            $rgTotal = [math]::Round((($svcRows | Measure-Object cost -Sum).Sum), 4)
+            [PSCustomObject]@{
+                resource_group = $grp.Name
+                cost           = $rgTotal
+                service_count  = $svcRows.Count
+                services       = @($svcRows | Select-Object service, cost)
+            }
+        }
+        $byResourceGroupService = @($rgSvcSummaries | Sort-Object cost -Descending)
+    } else {
+        Write-TaskLog "WARN" "ResourceGroupName+ServiceName query returned no PreTaxCost column; by_resource_group_service left empty."
+    }
+} else {
+    Write-TaskLog "WARN" "ResourceGroupName+ServiceName query failed after retries; attempting carry-forward from last KVS record (service-axis data still pushed)."
+    $prevForRgSvc = Get-PreviousAzureCostValue
+    $prevRgSvcList = @($prevForRgSvc.by_resource_group_service)
+    if ($prevForRgSvc -and $prevRgSvcList.Count -gt 0) {
+        $byResourceGroupService = $prevRgSvcList
+        $rgSvcStaleSince = if ($prevForRgSvc.by_resource_group_service_stale_since) { $prevForRgSvc.by_resource_group_service_stale_since } else { $prevForRgSvc.collected_at }
+        Write-TaskLog "WARN" "Carried forward $($byResourceGroupService.Count) resource-group x service groups from $rgSvcStaleSince (429 exhausted for today's run)."
+    } else {
+        # giip #1067: same "no prior value to carry forward" case as the RG axis above.
+        $rgSvcCollectionFailed = $true
+        Write-TaskLog "WARN" "No previous by_resource_group_service available to carry forward; by_resource_group_service left empty for this run."
+    }
+}
+Write-TaskLog "INFO" "Collected $($byResourceGroupService.Count) resource-group x service groups."
+
+# --- Summarize (this becomes kValue) -----------------------------------------
+$svcStaleSince = $null
+if ($svcQ) {
+    $services = foreach ($row in $rows) {
+        [PSCustomObject]@{
+            service = if ($iSvc -ge 0) { $row[$iSvc] } else { "All" }
+            cost    = [math]::Round([double]$row[$iCost], 4)
+        }
+    }
+    $services = @($services | Sort-Object cost -Descending)
+    $total = 0.0
+    foreach ($row in $rows) { $total += [double]$row[$iCost] }
+    $currency = if ($rows.Count -gt 0 -and $iCur -ge 0) { $rows[0][$iCur] } else { $null }
+} else {
+    # giip #1919: ServiceName axis 429-exhausted -- carry forward by_service /
+    # total_pretax_cost / currency from the last KVS record (same helper the RG
+    # axes use below; by this point it may already be cached from a prior call).
+    $prevForSvc  = Get-PreviousAzureCostValue
+    $prevSvcList = @($prevForSvc.by_service)
+    if ($prevForSvc -and $prevSvcList.Count -gt 0) {
+        $services = $prevSvcList
+        $total    = $prevForSvc.total_pretax_cost
+        $currency = $prevForSvc.currency
+        $svcStaleSince = if ($prevForSvc.by_service_stale_since) { $prevForSvc.by_service_stale_since } else { $prevForSvc.collected_at }
+        Write-TaskLog "WARN" "Carried forward $($services.Count) service rows (total=$total $currency) from $svcStaleSince (429 exhausted for today's run)."
+    } else {
+        # No prior KVS record to carry forward (new csn/subscription, or first
+        # collection ever exhausted 429) -- nothing usable to push, so abort the
+        # run rather than push an empty/wrong total (same principle as the RG
+        # axes' "no previous value" branch below).
+        Write-TaskLog "ERROR" "ServiceName query failed (429 exhausted) and no previous by_service KVS value to carry forward. Aborting."
+        exit 1
+    }
+}
+
+$summary = [PSCustomObject]@{
+    subscription_id      = $subId
+    subscription_name    = $subName
+    period               = $periodDesc
+    currency             = $currency
+    total_pretax_cost    = [math]::Round($total, 4)
+    service_count        = $services.Count
+    by_service           = $services
+    resource_group_count = $byResourceGroup.Count
+    by_resource_group    = $byResourceGroup
+    by_resource_group_service = $byResourceGroupService
+    collected_at         = $today.ToString("s")
+}
+# giip #1028/#1919: mark axis fields as carried-forward from an earlier run (429
+# exhausted today) so the KVS record is honest about *when* that data is from,
+# instead of silently implying it was collected at $today like everything else.
+if ($svcStaleSince) { $summary | Add-Member -NotePropertyName "by_service_stale_since" -NotePropertyValue $svcStaleSince }
+if ($rgStaleSince) { $summary | Add-Member -NotePropertyName "by_resource_group_stale_since" -NotePropertyValue $rgStaleSince }
+if ($rgSvcStaleSince) { $summary | Add-Member -NotePropertyName "by_resource_group_service_stale_since" -NotePropertyValue $rgSvcStaleSince }
+# giip #1067: 429 exhausted AND no previous KVS value existed to carry forward -- the axis
+# is empty because collection failed, not because there is genuinely nothing to report.
+if ($rgCollectionFailed) { $summary | Add-Member -NotePropertyName "by_resource_group_collection_failed" -NotePropertyValue $true }
+if ($rgSvcCollectionFailed) { $summary | Add-Member -NotePropertyName "by_resource_group_service_collection_failed" -NotePropertyValue $true }
+
+# --- giip #2604: 일일 증감 보고용 "직전 수집분" 확보 ---------------------------
+# ⚠️ 반드시 KVS push **이전에** 가져와야 한다. push 후에는 KVSFactorLast 가 오늘 값이라
+# 비교 대상이 사라진다(KVSFactorLast 는 최신 1건만 준다).
+# Get-PreviousAzureCostValue 는 내부 캐시가 있어, 위 carry-forward 경로에서 이미
+# 조회했다면 API 호출이 추가로 나가지 않는다.
+$prevSummaryForReport = $null
+if (-not $SkipMqeReport) {
+    $prevSummaryForReport = Get-PreviousAzureCostValue
+    if ($null -eq $prevSummaryForReport) {
+        Write-TaskLog "WARN" "직전 KVS 레코드가 없어 일일 증감 보고는 '비교 불가'로 등록된다(최초 실행이거나 조회 실패). 0 으로 치지 않는다."
+    }
+}
+
+# --- giip #2604: 이번 요약(kValue)을 날짜별 스냅샷으로 남긴다 ------------------
+# tKVS 는 pAdmCleanTable(기본 34일)이 주기 삭제하고 KVSFactorLast 는 최신 1건만 준다.
+# 수동 재발송·사후 검증(giipscripts/azure-cost-report-mqe.ps1)이 쓸 원본을 남겨 둔다.
+try {
+    $summarySnapshot = Join-Path $AzLogDir ("azure_cost_summary_{0}_{1}.json" -f $Factor, $today.ToString("yyyyMMdd"))
+    [System.IO.File]::WriteAllText($summarySnapshot, ($summary | ConvertTo-Json -Depth 10), $utf8NoBom)
+    Write-TaskLog "INFO" "Saved summary snapshot -> $summarySnapshot"
+} catch {
+    Write-TaskLog "WARN" "Summary snapshot save failed: $($_.Exception.Message)"
+}
+
+# --- Push to GIIP KVS --------------------------------------------------------
+Write-TaskLog "INFO" "Pushing azure_cost to KVS (lssn=$($Config.lssn), total=$($summary.total_pretax_cost) $currency)."
+$resp = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor $Factor -Value $summary
+
+if ($resp -and ($resp.RstVal -eq "200" -or $resp.RstVal -eq 200)) {
+    Write-TaskLog "INFO" "Azure cost uploaded successfully."
+
+    # giip #1956: tKVS는 pAdmCleanTable(@dterm 기본 34일)이 아카이브 없이 주기 삭제한다. push 직후
+    # 즉시 tAzureCostSnapshot(장기 보관 겸 조회 전용 테이블)에 반영해 34일 삭제 전 유실을 막는다.
+    # 실패해도 조회 SP(pApiAzureCostbyAK 등)가 tKVS raw fallback으로 즉시 복구 가능하므로 WARN만 남기고
+    # 이 스크립트 자체의 성공/실패(exit code)에는 영향을 주지 않는다.
+    #
+    # giip #2610: 판정부는 "RstVal 이 200 이 아니다"와 "RstVal 이 응답에 아예 없다"를
+    # 반드시 구분해서 로그에 남긴다.
+    #   2026-09-07~09-16 10일 연속으로 `RstVal=`(빈 문자열) WARN 이 찍혔는데, 실제로는 동기화가
+    #   성공하고 있었다. 원인은 서버 SP(pApiAzureCostSnapshotSyncbySk)가 결과셋을 2개 반환했고
+    #   giipApi 직렬화 계층이 **첫 번째 결과셋만** data 로 내보내 RstVal 이 응답에서 통째로
+    #   사라진 것이다(SP 쪽은 giipdb PR 에서 단일 결과셋으로 수정함).
+    #   PowerShell 은 없는 속성 접근에 예외 없이 $null 을 주므로 "$syncResp.RstVal" 이 빈
+    #   문자열로 보간됐고, 그래서 "실패했는데 코드가 안 찍힌 것"과 구분이 안 됐다.
+    #   → RstVal 이 없으면 응답 원문을 함께 남겨, 다음에 계약이 또 어긋나도 로그만 보고
+    #     원인을 알 수 있게 한다.
+    try {
+        $syncJson = (@{ lssn = "$($Config.lssn)" } | ConvertTo-Json -Compress)
+        $syncResp = Invoke-GiipApiV2 -Config $Config -CommandText "AzureCostSnapshotSync lssn" -JsonData $syncJson
+        $syncRst = if ($syncResp) { $syncResp.RstVal } else { $null }
+        if ($null -ne $syncRst -and "$syncRst" -eq "200") {
+            $mergedInfo = if ($null -ne $syncResp.mergedRows) { " (mergedRows=$($syncResp.mergedRows))" } else { "" }
+            Write-TaskLog "INFO" "Azure cost snapshot sync (tAzureCostSnapshot) succeeded.$mergedInfo"
+        } else {
+            $srv = if (-not $syncResp) {
+                "no-response"
+            } elseif ($null -eq $syncRst) {
+                # 응답은 왔는데 RstVal 이 없다 = 서버 응답 계약 위반. 원문을 남긴다.
+                $dump = try { ($syncResp | ConvertTo-Json -Compress -Depth 4) } catch { "$syncResp" }
+                if ($dump.Length -gt 500) { $dump = $dump.Substring(0, 500) + "...(truncated)" }
+                "missing-RstVal; response=$dump"
+            } else {
+                "$syncRst"
+            }
+            Write-TaskLog "WARN" "Azure cost snapshot sync failed (RstVal=$srv) -- tKVS push already succeeded, read-path raw fallback will cover the gap."
+        }
+    } catch {
+        Write-TaskLog "WARN" "Azure cost snapshot sync threw: $($_.Exception.Message) -- tKVS push already succeeded, read-path raw fallback will cover the gap."
+    }
+
+    # giip #2604: 직전 수집 대비 증감 보고서를 MQE(tMQLog, cSn 은 SK 로 결정됨)에 등록한다.
+    # 10% (기본) 이상 증가면 제목이 "급증 경보"로 바뀐다. 미만이어도 매일 보고한다.
+    # 등록 실패는 수집 실패가 아니므로 exit code 에는 영향을 주지 않는다(로그만 남긴다).
+    if ($SkipMqeReport) {
+        Write-TaskLog "INFO" "MQE 일일 증감 보고 건너뜀(-SkipMqeReport)."
+    } else {
+        try {
+            $reportResult = Send-AzureCostDeltaReport -Config $Config -Current $summary -Previous $prevSummaryForReport `
+                -ThresholdPercent $AlertThresholdPercent -Lssn "$($Config.lssn)" -To $MqeTo -Type $MqeType -Sk $MqeSk
+            $rpt = $reportResult.Report
+            $mqr = $reportResult.MqResult
+            Write-TaskLog "INFO" ("MQE report built: comparable={0} alert={1} threshold={2}% subject='{3}'" -f `
+                $rpt.Comparable, $rpt.IsAlert, $reportResult.Threshold, $rpt.Subject)
+            if ($mqr.Ok) {
+                Write-TaskLog "INFO" "MQE report registered into tMQLog (mqSn=$($mqr.MqSn))."
+            } elseif ($mqr.Skipped) {
+                # RstVal 200 이지만 INSERT 되지 않았다 -- 절대 성공으로 취급하지 않는다.
+                Write-TaskLog "WARN" "MQE report SKIPPED by duplicate gate (RstVal=200, mqSn=0): 같은 제목/수신처/csn 의 미발송 메시지가 이미 있다. 보고서는 등록되지 않았다."
+            } else {
+                Write-TaskLog "ERROR" "MQE report registration failed (RstVal=$($mqr.RstVal), RstMsg='$($mqr.RstMsg)'). KVS 적재 자체는 성공했으므로 수집은 정상 종료한다."
+            }
+        } catch {
+            Write-TaskLog "ERROR" "MQE report threw: $($_.Exception.Message). KVS 적재 자체는 성공했으므로 수집은 정상 종료한다."
+        }
+    }
+
+    exit 0
+} else {
+    $rv = if ($resp) { $resp.RstVal } else { "no-response" }
+    Write-TaskLog "ERROR" "KVS put failed (RstVal=$rv)."
+    exit 1
+}
+
+} catch {
+    Write-TaskLog "ERROR" "Unhandled failure: $($_.Exception.Message)"
+    exit 1
+}

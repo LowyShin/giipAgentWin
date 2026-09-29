@@ -1,6 +1,6 @@
 REM DPA - Database Performance Analysis
 REM sql server version
-REM mysql (on linux) : https://github.com/LowyShin/giipAgentLinux/blob/master/giipscripts/execmysql.sh
+REM mysql (on linux) : https://github.com/LowyShin/giipAgentLinux/blob/main/giipscripts/execmysql.sh
 
 REM call me when you want use DPA, we can help to use. contact@littleworld.net
 

@@ -34,8 +34,8 @@ Write-GiipLog "INFO" "[HostConnectionList] Starting..."
 try {
     # 1. Get TCP Connections (State: Established, Listen)
     # Note: Requires Windows 8 / Server 2012 or later
-    # ⚠️ Security Note: Include LISTEN state to detect potential backdoors/threats
-    # ⚠️ Performance Note: Limit to 2000 to prevent data bloat
+    #  Security Note: Include LISTEN state to detect potential backdoors/threats
+    #  Performance Note: Limit to 2000 to prevent data bloat
     $TopConnections = 2000
     $connections = Get-NetTCPConnection -State Established, Listen -ErrorAction SilentlyContinue | Select-Object -First $TopConnections
 
@@ -46,7 +46,7 @@ try {
     }
 
     # ============================================================================
-    # 🔍 [NEW] ENRICHMENT: Local SQL Server Session Check
+    #  [NEW] ENRICHMENT: Local SQL Server Session Check
     # ============================================================================
     $SqlSessionMap = @{}
     $isSqlSvrRunning = Get-Process -Name "sqlservr" -ErrorAction SilentlyContinue
@@ -111,15 +111,30 @@ try {
         if ($conn.LocalAddress -eq "127.0.0.1" -or $conn.LocalAddress -eq "::1") { continue }
 
         # Resolve Process Name
-        $procName = $null
+        $procName = "Unknown"
         if ($conn.OwningProcess -gt 0) {
             $p = Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue
             if ($p) { $procName = $p.ProcessName }
         }
 
         # Build Object
-        # ... (qHash enrichment) ...
-        
+        # Determine if this row can be enriched with query metadata
+        $qHash = ""
+        $sqlHandle = ""
+        $planHandle = ""
+        if ($SqlSessionMap.Count -gt 0) {
+            $key = "$($conn.RemoteAddress):$($conn.RemotePort)"
+            if ($SqlSessionMap.ContainsKey($key)) {
+                $session = $SqlSessionMap[$key]
+                # Verify local port matches to ensure we aren't matching a different service
+                if ($conn.LocalPort -eq $session["localPort"]) {
+                    $qHash = if ($session.ContainsKey("hash")) { $session["hash"] } else { "" }
+                    $sqlHandle = if ($session.ContainsKey("sql_handle")) { $session["sql_handle"] } else { "" }
+                    $planHandle = if ($session.ContainsKey("plan_handle")) { $session["plan_handle"] } else { "" }
+                }
+            }
+        }
+
         $report += @{
             local_ip     = $conn.LocalAddress
             local_port   = $conn.LocalPort
@@ -145,7 +160,7 @@ try {
         # Send to API (KVS)
         $response = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "netstat" -Value $report
 
-        # 🚀 Report status to Agent Work Explorer
+        #  Report status to Agent Work Explorer
         $workStatus = if ($response.RstVal -eq "200") { "success" } else { "fail" }
         $workMsg = if ($response.RstVal -eq "200") { "Uploaded $($report.Count) connections." } else { "Upload failed: $($response.RstMsg)" }
         
@@ -189,3 +204,4 @@ catch {
 
 Write-GiipLog "INFO" "[HostConnectionList] Completed."
 exit 0
+

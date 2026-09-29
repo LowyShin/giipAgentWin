@@ -1,6 +1,7 @@
 # GIIP Agent Configuration Files (CONTAINS SECRETS!)
 # Never commit these files with actual credentials
-giipAgent.cfg
+# giipAgent.cfg (TRACKED AS SAMPLE - DO NOT ADD REAL KEYS HERE)
+
 *.cfg.local
 *.cfg.prod
 *.cfg.backup
@@ -15,7 +16,13 @@ giipLogs/
 *.tmp
 *.temp
 giipTmpScript.*
+
+# Process lock files (giip #2338 - runtime PID/start-time markers)
+*.lock
 discovery-output*.json
+data/
+logs/
+agent_test_out.txt
 
 # OS Files
 .DS_Store

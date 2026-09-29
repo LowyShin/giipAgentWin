@@ -4,7 +4,7 @@
 
 # Load configuration
 $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
-# ⚠️⚠️⚠️ DO NOT MODIFY THIS PATH ⚠️⚠️⚠️
+#  DO NOT MODIFY THIS PATH 
 # giipAgent.cfg must be in ScriptDir (giipAgentWin), not parent!
 $ConfigFile = Join-Path $ScriptDir "giipAgent.cfg"
 
@@ -131,3 +131,4 @@ catch {
     Write-AgentLog "Stack trace: $($_.ScriptStackTrace)"
     exit 1
 }
+

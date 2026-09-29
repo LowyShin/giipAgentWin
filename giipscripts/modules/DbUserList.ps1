@@ -36,12 +36,9 @@ try {
     $reqJson = $reqData | ConvertTo-Json -Compress
     
     # Use unified SP 'pApiManagedDatabaseListForAgentbySk'
-    $response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson
-    
-    $dbList = $null
-    if ($response.data) { $dbList = $response.data }
-    elseif ($response -is [Array]) { $dbList = $response }
-    elseif ($response.mdb_id) { $dbList = @($response) }
+    $response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson -RawList
+
+    $dbList = if ($response.data) { $response.data } else { @() }
 
     if (-not $dbList) {
         Write-GiipLog "INFO" "[DbUserList] No databases found."
@@ -71,7 +68,10 @@ try {
                     # Use SqlConnectionStringBuilder to safely handle special characters in password
                     $connStrBuilder = New-Object System.Data.SqlClient.SqlConnectionStringBuilder
                     $connStrBuilder["Data Source"] = "$dbHost,$port"
-                    $connStrBuilder["Initial Catalog"] = "master"
+                    $dbName = if ($db.db_database) { $db.db_database } elseif ($db.db_name) { $db.db_name } else { $null }
+                    if ($dbName -and $dbName.Trim()) {
+                        $connStrBuilder["Initial Catalog"] = $dbName
+                    }
                     $connStrBuilder["User ID"] = $user
                     $connStrBuilder["Password"] = $pass
                     $connStrBuilder["TrustServerCertificate"] = $true
@@ -107,18 +107,23 @@ try {
 
                     if ($userList.Count -gt 0) {
                         # Upload to Net3dUserListPut
-                        $ulPayload = @{
+                        # MANDATE: Use sufficient -Depth to prevent 'S' (System.Collections...) error
+                        $jsonPayload = @{
                             mdb_id    = $mdb_id
                             lssn      = $Config.lssn
                             user_list = $userList
-                        } | ConvertTo-Json -Depth 5 -Compress
+                        } | ConvertTo-Json -Depth 10 -Compress
 
-                        # Workaround for 'jsondata' keyword bug in giipApiSk2 engine (NN' syntax error)
-                        # We use a custom key to trigger property replacement instead of broken keyword replacement
-                        $wrapPayload = @{ jsondata_fixed = $ulPayload } | ConvertTo-Json -Compress
                         Write-GiipLog "INFO" ("[DbUserList] Sending user_list for mdb_id=$mdb_id, host=$dbHost (MSSQL)")
-                        Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata_fixed" -JsonData $wrapPayload | Out-Null
-                        Write-GiipLog "INFO" ("[DbUserList] Data uploaded for {0} (Success)" -f $dbHost)
+                        # Use standard 'jsondata' parameter as now supported/fixed in Sk3
+                        # giip #3079: 반환값을 Out-Null로 버리고 무조건 "(Success)" 로그를
+                        # 남기던 버그. RstVal을 실제로 확인한다.
+                        $ulResp = Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata" -JsonData $jsonPayload
+                        if ($ulResp -and $ulResp.RstVal -eq "200") {
+                            Write-GiipLog "INFO" ("[DbUserList] Data uploaded for {0} (Success)" -f $dbHost)
+                        } else {
+                            Write-GiipApiFailure -Config $Config -Context "[DbUserList] Net3dUserListPut (MSSQL, host=$dbHost)" -Response $ulResp
+                        }
                     }
                 }
                 catch {
@@ -173,18 +178,23 @@ ORDER BY User;
 
                     if ($userList.Count -gt 0) {
                         # Upload to Net3dUserListPut
-                        $ulPayload = @{
+                        # MANDATE: Use sufficient -Depth to prevent 'S' (System.Collections...) error
+                        $jsonPayload = @{
                             mdb_id    = $mdb_id
                             lssn      = $Config.lssn
                             user_list = $userList
-                        } | ConvertTo-Json -Depth 5 -Compress
+                        } | ConvertTo-Json -Depth 10 -Compress
 
-                        # Workaround for 'jsondata' keyword bug in giipApiSk2 engine (NN' syntax error)
-                        # We use a custom key to trigger property replacement instead of broken keyword replacement
-                        $wrapPayload = @{ jsondata_fixed = $ulPayload } | ConvertTo-Json -Compress
                         Write-GiipLog "INFO" ("[DbUserList] Sending user_list for mdb_id=$mdb_id, host=$dbHost (MySQL)")
-                        Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata_fixed" -JsonData $wrapPayload | Out-Null
-                        Write-GiipLog "INFO" ("[DbUserList] Data uploaded for {0} (Success)" -f $dbHost)
+                        # Use standard 'jsondata' parameter as now supported/fixed in Sk3
+                        # giip #3079: 반환값을 Out-Null로 버리고 무조건 "(Success)" 로그를
+                        # 남기던 버그. RstVal을 실제로 확인한다.
+                        $ulResp = Invoke-GiipApiV2 -Config $Config -CommandText "Net3dUserListPut jsondata" -JsonData $jsonPayload
+                        if ($ulResp -and $ulResp.RstVal -eq "200") {
+                            Write-GiipLog "INFO" ("[DbUserList] Data uploaded for {0} (Success)" -f $dbHost)
+                        } else {
+                            Write-GiipApiFailure -Config $Config -Context "[DbUserList] Net3dUserListPut (MySQL, host=$dbHost)" -Response $ulResp
+                        }
                     }
                 }
                 catch {
@@ -210,3 +220,4 @@ catch {
 }
 
 exit 0
+

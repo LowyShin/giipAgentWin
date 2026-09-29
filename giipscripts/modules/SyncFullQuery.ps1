@@ -25,14 +25,15 @@ $Config = Get-GiipConfig
 # 2. Get DB List
 $reqData = @{ lssn = $Config.lssn }
 $reqJson = $reqData | ConvertTo-Json -Compress
-$response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson
-$dbList = if ($response.data) { $response.data } else { @($response) }
+$response = Invoke-GiipApiV2 -Config $Config -CommandText "ManagedDatabaseListForAgent lssn" -JsonData $reqJson -RawList
+$dbList = if ($response.data) { $response.data } else { @() }
 
 foreach ($db in $dbList) {
     if ($db.db_type -ne 'MSSQL') { continue }
     
     try {
-        $connStr = "Server=$($db.db_host),$($db.db_port);Database=master;User Id=$($db.db_user);Password=$($db.db_password);TrustServerCertificate=True;Connection Timeout=10;"
+        $dbName = if ($db.db_database) { $db.db_database } elseif ($db.db_name) { $db.db_name } else { "master" }
+        $connStr = "Server=$($db.db_host),$($db.db_port);Database=$dbName;User Id=$($db.db_user);Password=$($db.db_password);TrustServerCertificate=True;Connection Timeout=10;"
         $conn = New-Object System.Data.SqlClient.SqlConnection($connStr)
         $conn.Open()
         
@@ -50,10 +51,8 @@ foreach ($db in $dbList) {
         while ($reader.Read()) {
             $hash = $reader["query_hash"]
             $text = $reader["full_text"]
-            if ($hash -and $text -and $text -isnot [System.DBNull]) {
-                # Sanitize SQL: Remove newlines and excessive whitespace for JSON safety
-                $cleanText = $text.Replace("`r", " ").Replace("`n", " ") -replace '\s+', ' '
-                Invoke-GiipKvsPut -Config $Config -Type "query" -Key "$hash" -Factor "full_text" -Value $cleanText
+            if ($hash -and $text) {
+                Invoke-GiipKvsPut -Config $Config -Type "query" -Key "$hash" -Factor "full_text" -Value $text
             }
         }
         $reader.Close()
@@ -65,3 +64,4 @@ foreach ($db in $dbList) {
 }
 
 exit 0
+
