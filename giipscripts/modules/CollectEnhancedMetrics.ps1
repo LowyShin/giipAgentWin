@@ -10,6 +10,11 @@ $ScriptDir = Split-Path -Path $MyInvocation.MyCommand.Path -Parent
 $AgentRoot = Split-Path -Path (Split-Path -Path $ScriptDir -Parent) -Parent
 $LibDir = Join-Path $AgentRoot "lib"
 
+# Buffer retention caps (giip #3560) -- keep buffered payloads from accumulating
+# indefinitely when KVS stays unreachable for a long time.
+$BufferRetentionDays = 7
+$BufferMaxCount = 500
+
 # Load Libraries
 try {
     . (Join-Path $LibDir "Common.ps1")
@@ -31,6 +36,63 @@ catch {
 }
 
 Write-GiipLog "INFO" "[CollectEnhancedMetrics] Starting detailed performance metrics collection..."
+
+# ============================================================================
+# Buffer resend (giip #3560): re-upload payloads that previous runs buffered
+# locally after KVS was unreachable. Runs BEFORE collecting new metrics so that
+# a recovered network flushes the backlog oldest-first. This block never aborts
+# the script (no exit 1) and is wrapped in try/catch so a single bad file cannot
+# break metrics collection -- failed files stay for the next run to retry.
+# ============================================================================
+try {
+    $resendDir = Join-Path $AgentRoot "giipLogs/payloads"
+    if (Test-Path $resendDir) {
+        # Oldest first: filenames embed a yyyyMMdd_HHmmss_fff timestamp, so Name sorts chronologically.
+        $pending = @(Get-ChildItem -Path $resendDir -Filter "CollectEnhancedMetrics_*.json" -File -ErrorAction SilentlyContinue | Sort-Object Name)
+        if ($pending.Count -gt 0) {
+            Write-GiipLog "INFO" "[CollectEnhancedMetrics] Buffer resend: found $($pending.Count) pending buffer file(s)."
+            foreach ($bf in $pending) {
+                # One attempt per file per run: failures are retried on later runs, keeping startup short.
+                try {
+                    Write-GiipLog "INFO" "[CollectEnhancedMetrics] Buffer resend attempt: $($bf.Name)"
+                    $bufObj = (Get-Content -Path $bf.FullName -Raw -ErrorAction Stop) | ConvertFrom-Json -ErrorAction Stop
+                    $resendResp = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$($Config.lssn)" -Factor "performance_metrics" -Value $bufObj
+                    if ($resendResp -and $resendResp.RstVal -eq "200") {
+                        Remove-Item -Path $bf.FullName -Force -ErrorAction SilentlyContinue
+                        Write-GiipLog "INFO" "[CollectEnhancedMetrics] Buffer resend success and deleted: $($bf.Name)"
+                    } else {
+                        $rv = if ($resendResp) { $resendResp.RstVal } else { "null" }
+                        Write-GiipLog "WARN" "[CollectEnhancedMetrics] Buffer resend failed, kept: $($bf.Name) (RstVal=$rv)"
+                    }
+                } catch {
+                    Write-GiipLog "WARN" "[CollectEnhancedMetrics] Buffer resend error, kept: $($bf.Name) ($_)"
+                }
+            }
+        }
+
+        # Retention caps: prune oldest buffers beyond age/count limits so they never pile up unbounded.
+        $ageCutoff = (Get-Date).AddDays(-$BufferRetentionDays)
+        $aged = @(Get-ChildItem -Path $resendDir -Filter "CollectEnhancedMetrics_*.json" -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt $ageCutoff })
+        foreach ($old in $aged) {
+            try {
+                Remove-Item -Path $old.FullName -Force -ErrorAction SilentlyContinue
+                Write-GiipLog "INFO" "[CollectEnhancedMetrics] Buffer retention: deleted (age > ${BufferRetentionDays}d): $($old.Name)"
+            } catch {}
+        }
+        $remaining = @(Get-ChildItem -Path $resendDir -Filter "CollectEnhancedMetrics_*.json" -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime)
+        if ($remaining.Count -gt $BufferMaxCount) {
+            $excess = $remaining.Count - $BufferMaxCount
+            foreach ($old in ($remaining | Select-Object -First $excess)) {
+                try {
+                    Remove-Item -Path $old.FullName -Force -ErrorAction SilentlyContinue
+                    Write-GiipLog "INFO" "[CollectEnhancedMetrics] Buffer retention: deleted (count > ${BufferMaxCount}): $($old.Name)"
+                } catch {}
+            }
+        }
+    }
+} catch {
+    Write-GiipLog "WARN" "[CollectEnhancedMetrics] Buffer resend block error (non-fatal): $_"
+}
 
 try {
     # 1. cpu_usage_detail
