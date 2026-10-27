@@ -32,6 +32,9 @@ param(
     [string]$MqType = "slack",
     # 비우면 cfg 의 sk. **이 SK 가 곧 보고서가 들어갈 cSn 을 결정한다.**
     [string]$Sk = "",
+    # 비우면 SK->csn->tCorp.cLang 을 조회해 수신 csn 언어로 쓴다(실패 시 ko).
+    # 명시하면(ko/ja/en...) 조회를 건너뛰고 그 언어로 만든다 — 테스트/강제 지정용.
+    [string]$Lang = "",
     [switch]$DryRun
 )
 
@@ -69,7 +72,10 @@ if (-not $lssnValue) { $lssnValue = [string]$Config.lssn }
 
 if ($DryRun) {
     # 등록 없이 판정과 본문만 확인한다.
-    $report = New-AzureCostDeltaReport -Current $current -Previous $previous -ThresholdPercent $threshold -Lssn $lssnValue
+    # 언어: 명시값 우선, 없으면 SK->csn->tCorp.cLang 조회(실패 시 ko).
+    $langValue = $Lang
+    if (-not $langValue) { $langValue = Resolve-AzureCostRecipientLang -Config $Config -Sk $Sk }
+    $report = New-AzureCostDeltaReport -Current $current -Previous $previous -ThresholdPercent $threshold -Lssn $lssnValue -Lang $langValue
     Write-Host "---- SUBJECT ----"
     Write-Host $report.Subject
     Write-Host "---- BODY ----"
@@ -81,8 +87,9 @@ if ($DryRun) {
 }
 
 # 수집기(azure-cost-put-win.ps1)와 **똑같은** 진입점을 쓴다 — 판정/제목/본문이 갈라지지 않도록.
+# -Lang 비우면 Send-AzureCostDeltaReport 가 SK->csn->tCorp.cLang 을 조회한다(실패 시 ko).
 $sent = Send-AzureCostDeltaReport -Config $Config -Current $current -Previous $previous `
-    -ThresholdPercent $AlertThresholdPercent -Lssn $lssnValue -To $MqeTo -Type $MqType -Sk $Sk
+    -ThresholdPercent $AlertThresholdPercent -Lssn $lssnValue -To $MqeTo -Type $MqType -Sk $Sk -Lang $Lang
 $report = $sent.Report
 $result = $sent.MqResult
 
@@ -91,7 +98,7 @@ Write-Host $report.Subject
 Write-Host "---- BODY ----"
 Write-Host $report.Body
 Write-Host "---- META ----"
-Write-Host ("Comparable={0} IsAlert={1} Threshold={2}" -f $report.Comparable, $report.IsAlert, $sent.Threshold)
+Write-Host ("Comparable={0} IsAlert={1} Threshold={2} Lang={3}" -f $report.Comparable, $report.IsAlert, $sent.Threshold, $sent.Lang)
 
 Write-Host ("[INFO] MQE result: Ok={0} Skipped={1} RstVal={2} mqSn={3} RstMsg='{4}'" -f `
     $result.Ok, $result.Skipped, $result.RstVal, $result.MqSn, $result.RstMsg)
