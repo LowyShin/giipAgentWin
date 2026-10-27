@@ -36,7 +36,9 @@ param(
     [double]$AlertThresholdPercent = -1,  # 급증 알람 임계(%). -1 = cfg azure_cost_alert_pct > 기본 10
     [string]$MqeTo = "",                  # 비우면 cfg mqe_to, 그것도 없으면 mqTo 미지정(csn 기본 수신처)
     [string]$MqeType = "slack",           # csn 47 기존 관례(tMQENotificationConfig.mqType='slack')
-    [string]$MqeSk = ""                   # 비우면 cfg sk. **이 SK 가 곧 보고서가 들어갈 cSn 을 결정한다.**
+    [string]$MqeSk = "",                  # 비우면 cfg sk. **이 SK 가 곧 보고서가 들어갈 cSn 을 결정한다.**
+    [string]$MqeLang = ""                 # giip #4209: 비우면 SK->csn->tCorp.cLang 조회(실패 시 ko).
+                                          # 명시하면(ko/ja/en...) 그 언어로 보고서를 만든다 — 테스트/강제용.
 )
 
 $ErrorActionPreference = "Stop"
@@ -573,12 +575,14 @@ if ($resp -and ($resp.RstVal -eq "200" -or $resp.RstVal -eq 200)) {
         Write-TaskLog "INFO" "MQE 일일 증감 보고 건너뜀(-SkipMqeReport)."
     } else {
         try {
+            # giip #4209: -Lang 비우면 Send-AzureCostDeltaReport 가 MqeSk(=수신 csn)의
+            # tCorp.cLang 을 조회해 그 언어로 보고서를 만든다(조회 실패 시 ko).
             $reportResult = Send-AzureCostDeltaReport -Config $Config -Current $summary -Previous $prevSummaryForReport `
-                -ThresholdPercent $AlertThresholdPercent -Lssn "$($Config.lssn)" -To $MqeTo -Type $MqeType -Sk $MqeSk
+                -ThresholdPercent $AlertThresholdPercent -Lssn "$($Config.lssn)" -To $MqeTo -Type $MqeType -Sk $MqeSk -Lang $MqeLang
             $rpt = $reportResult.Report
             $mqr = $reportResult.MqResult
-            Write-TaskLog "INFO" ("MQE report built: comparable={0} alert={1} threshold={2}% subject='{3}'" -f `
-                $rpt.Comparable, $rpt.IsAlert, $reportResult.Threshold, $rpt.Subject)
+            Write-TaskLog "INFO" ("MQE report built: comparable={0} alert={1} threshold={2}% lang={3} subject='{4}'" -f `
+                $rpt.Comparable, $rpt.IsAlert, $reportResult.Threshold, $reportResult.Lang, $rpt.Subject)
             if ($mqr.Ok) {
                 Write-TaskLog "INFO" "MQE report registered into tMQLog (mqSn=$($mqr.MqSn))."
             } elseif ($mqr.Skipped) {
