@@ -430,6 +430,11 @@ API 커맨드 **`KVSPut kType kKey kFactor kValue`** → giipdb SP `pApiKVSPutby
 - **(g)** **자동탐색 기능 자체는 폐기되지 않았다. 별도 경로로 살아 있다.**
   - 레포 루트의 **`giip-auto-discover.ps1`** 이 **같은** `giipscripts/auto-discover-win.ps1` 을
     실행하고, 결과를 **`AgentAutoRegister`** API 로 보낸다.
+  - ⚠️ **"살아 있다"는 코드가 존재한다는 뜻이지, 실제로 동작해 왔다는 뜻은 아니다** (giip #3559).
+    이 경로는 2026-11-13 전까지 Task Scheduler 등록만 되어 있고 **한 번도 성공하지 못했다**
+    — 설정 파일 탐색 위치 오류(저장소 루트만 찾음)와 dispatcher 가 읽지 않는 API 호출 경로
+    (`cmd=` 파라미터, cfg 에 없는 `apiaddr` 키) 때문이었다. 상세·수정 내용은
+    `docs/SPEC_AND_CHECKLIST.md` §3 참조.
   - 그 SP(giipdb `SP/pApiAgentAutoRegisterBySK.sql` L194-196, L324-326)가
     `tKVS` 의 **같은 `kFactor='auto_discover_result'`** 행을 `MERGE` 로 갱신한다.
   - 즉 이 파일은 **"KVSPut 직접 적재"** 변형이고, 운영은 **"AgentAutoRegister 경유"** 변형을 쓴다.
