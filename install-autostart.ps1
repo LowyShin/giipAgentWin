@@ -94,7 +94,11 @@ function Invoke-SelfElevated {
     Write-Host "Administrator rights are required to register scheduled tasks."
     Write-Host "Relaunching as Administrator (approve the UAC prompt)..."
     try {
-        Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $argList -ErrorAction Stop
+        # -Wait -PassThru: wait for the elevated run and read its exit code.
+        # Without them this script would exit 0 even when the registration
+        # inside the elevated window failed, so the caller could not tell
+        # success from failure.
+        $elevated = Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList $argList -PassThru -Wait -ErrorAction Stop
     } catch {
         Write-Error "Elevation was declined or failed: $($_.Exception.Message)"
         Write-Host "Manual alternative: right-click PowerShell, choose 'Run as administrator', then run:"
@@ -102,6 +106,14 @@ function Invoke-SelfElevated {
         Write-Host "  .\install-autostart.ps1"
         exit 1
     }
+    if ($elevated.ExitCode -ne 0) {
+        Write-Error "The elevated run failed (exit code $($elevated.ExitCode)). See the elevated window for the cause."
+        Write-Host "Manual alternative: right-click PowerShell, choose 'Run as administrator', then run:"
+        Write-Host "  cd $PSScriptRoot"
+        Write-Host "  .\install-autostart.ps1"
+        exit 1
+    }
+    Write-Host "The elevated run finished successfully (exit code 0)."
     exit 0
 }
 
@@ -172,7 +184,7 @@ function Test-AgentTaskReady {
     $parallel = ($task.Settings.MultipleInstances -eq "Parallel")
     $interactive = ($task.Principal.LogonType -eq "Interactive")
     Write-Host "  Verification for $TaskName :"
-    Write-Host "    repetition trigger (5 min) : $hasRepetition ($repetitionInterval)"
+    Write-Host "    repetition trigger           : $hasRepetition ($repetitionInterval)"
     Write-Host "    logon trigger              : $hasLogon"
     Write-Host "    MultipleInstances=Parallel : $parallel ($($task.Settings.MultipleInstances))"
     Write-Host "    LogonType=Interactive      : $interactive ($($task.Principal.LogonType))"
@@ -249,9 +261,10 @@ if (-not (Test-Path $taskSchdRegPath)) {
     exit 1
 }
 
-# TaskSchdReg.ps1 calls exit 1 when its target launcher is missing, and
-# exit inside a &-invoked script would end this session too, so check the
-# launcher first. (This is the only exit path in TaskSchdReg.ps1.)
+# TaskSchdReg.ps1 calls exit 1 when its target launcher is missing. A script
+# invoked with & ends only itself: this script keeps running and the callee's
+# exit code arrives in $LASTEXITCODE. So check the launcher first, and check
+# $LASTEXITCODE after the call.
 $launcherPath = Join-Path $PSScriptRoot $LauncherFileName
 if (-not (Test-Path $launcherPath)) {
     Write-Error "Launcher not found: $launcherPath. Cannot register the agent task."
@@ -259,7 +272,17 @@ if (-not (Test-Path $launcherPath)) {
 }
 
 Write-Host "Step 1/3: Registering scheduled tasks via TaskSchdReg.ps1 (existing script, not modified)..."
-& $taskSchdRegPath
+$global:LASTEXITCODE = 0
+try {
+    & $taskSchdRegPath
+} catch {
+    Write-Error "TaskSchdReg.ps1 failed: $($_.Exception.Message)"
+    exit 1
+}
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "TaskSchdReg.ps1 failed (exit code $LASTEXITCODE). See the output above for the cause."
+    exit 1
+}
 
 try {
     Get-ScheduledTask -TaskName $AgentTaskName -ErrorAction Stop | Out-Null
@@ -304,7 +327,7 @@ Show-TaskSummary -TaskName $AutoDiscoveryTaskName | Out-Null
 Write-Host ""
 $ready = Test-AgentTaskReady -TaskName $AgentTaskName
 if (-not $ready) {
-    Write-Error "Verification failed: the task does not have a 5-minute repetition trigger AND a logon trigger with MultipleInstances=Parallel and LogonType=Interactive. See the output above."
+    Write-Error "Verification failed: the task does not have a repetition trigger AND a logon trigger with MultipleInstances=Parallel and LogonType=Interactive. See the output above."
     exit 1
 }
 
