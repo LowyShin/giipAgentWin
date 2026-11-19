@@ -203,7 +203,12 @@ function Invoke-GiipHeadlessScript {
             $stdErr = $errTask.Result
             return @{
                 Success  = ($p.ExitCode -eq 0)
+                # Output 은 기존 호출자 호환용 stdout+stderr 합본(불변).
+                # giip #4296: StdOut/StdErr 를 분리해 추가로 노출한다 - CqeRun 이
+                # cqeresult 정본 스키마에 꼬리 절단해 각각 기록한다.
                 Output   = $stdOut + "`n" + $stdErr
+                StdOut   = $stdOut
+                StdErr   = $stdErr
                 ExitCode = $p.ExitCode
                 Mode     = 'headless'
             }

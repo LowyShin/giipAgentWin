@@ -78,3 +78,76 @@ function Save-ExecutionLog {
         return $false
     }
 }
+
+# ============================================================================
+# giip #4296: CQE 실행 결과(stdout/stderr 꼬리)를 cqeresult 정본 경로로 병행 기록.
+#
+# Save-ExecutionLog 의 kFactor='giipagent' 이벤트(합본 앞부분 2000자)는 기존
+# [KVS] 버튼·#4295 검지 호환을 위해 그대로 둔다. 이 함수는 그와 별개로 콘솔
+# 조회 정본인 kFactor='cqeresult' 행을 1건 더 쓴다.
+#
+# 스키마(사양 giipdb CQE_SPECIFICATION.md §5.7.2-1, Linux cqeresult 와 동일한 평면 구조):
+#   kType='lssn', kKey=<lssn>, kFactor='cqeresult'
+#   kValue = { mslsn, mssn, lssn, script_name, status, exit_code,
+#              stdout, stderr, start_time, end_time, duration_seconds,
+#              hostname, os, agent_version, timestamp }
+# stdout/stderr 는 호출자가 이미 꼬리 절단한 값을 넘긴다(여기서 다시 자르지 않는다).
+# ============================================================================
+function Save-CqeResult {
+    param(
+        [Parameter(Mandatory)][System.Collections.IDictionary]$Config,
+        [Parameter(Mandatory)]$Mslsn,
+        [Parameter(Mandatory)]$Mssn,
+        [string]$ScriptName = "",
+        [string]$Status = "",
+        [int]$ExitCode = 0,
+        [string]$StdOut = "",
+        [string]$StdErr = "",
+        [string]$StartTime = "",
+        [string]$EndTime = "",
+        [int]$DurationSeconds = 0
+    )
+
+    try {
+        $lssn = $Config['lssn']
+        if (-not $lssn) {
+            Write-GiipLog "WARN" "[ExecutionLog] lssn missing in config - skipping cqeresult record."
+            return $false
+        }
+
+        $kValue = @{
+            mslsn            = $Mslsn
+            mssn             = $Mssn
+            lssn             = $lssn
+            script_name      = $ScriptName
+            status           = $Status
+            exit_code        = $ExitCode
+            stdout           = $StdOut
+            stderr           = $StdErr
+            start_time       = $StartTime
+            end_time         = $EndTime
+            duration_seconds = $DurationSeconds
+            hostname         = $env:COMPUTERNAME
+            os               = "windows"
+            agent_version    = $Global:GiipAgentVersion
+            timestamp        = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+        }
+
+        $response = Invoke-GiipKvsPut -Config $Config -Type "lssn" -Key "$lssn" -Factor "cqeresult" -Value $kValue
+
+        if ($response -and $response.RstVal -eq "200") {
+            Write-GiipLog "INFO" "[ExecutionLog] cqeresult sent (mslsn=$Mslsn status=$Status RstVal=$($response.RstVal))"
+            return $true
+        }
+        if (Get-Command Write-GiipApiFailure -ErrorAction SilentlyContinue) {
+            Write-GiipApiFailure -Config $Config -Context "[ExecutionLog] cqeresult KVS put (mslsn=$Mslsn)" -Response $response
+        } else {
+            Write-GiipLog "ERROR" "[ExecutionLog] cqeresult failed (mslsn=$Mslsn RstVal=$($response.RstVal))"
+        }
+        return $false
+    }
+    catch {
+        Write-GiipLog "WARN" "[ExecutionLog] Failed to save cqeresult (non-fatal): $($_.Exception.Message)"
+        return $false
+    }
+}
