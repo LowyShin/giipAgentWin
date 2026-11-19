@@ -1,12 +1,38 @@
 # Auto-Discovery Script for Windows
 # Collects OS, Hardware, Software, Services, Network information
 # Output: JSON format
+#
+# giip #3559 항목1: 서버 SP(pApiAgentAutoRegisterBySK)가 읽는 키를 모두 채운다.
+#   os / cpu / cpu_cores / memory_gb / disk_gb / agent_version / ipv4_global / ipv4_local
+# 키가 빠지면 SP 의 UPDATE 가 해당 컬럼을 NULL 로 덮어쓴다(LSCPU, LSSpecCPUs,
+# LSSpecDiskSizeGB, LSAgentVer, LSNIFLocal).
+# 키 목록의 정본은 giipdb/SP/pApiAgentAutoRegisterBySK.sql 의 JSON_VALUE 대상 8개 키다.
+#   (키를 추가/이름을 바꾸려면 그 SP 와 이 파일을 함께 고쳐야 한다)
 
 # Function to escape JSON strings
 function ConvertTo-JsonString {
     param([string]$Text)
     if ([string]::IsNullOrEmpty($Text)) { return "" }
     return $Text.Replace('\', '\\').Replace('"', '\"').Replace("`n", '\n').Replace("`r", '\r').Replace("`t", '\t')
+}
+
+# RFC1918 사설 IPv4 인지 판별 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+function Test-IsPrivateIPv4 {
+    param([string]$Ip)
+    if ([string]::IsNullOrWhiteSpace($Ip)) { return $false }
+    if ($Ip -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { return $false }
+    foreach ($oct in $Ip.Split('.')) { if ([int]$oct -gt 255) { return $false } }
+    return ($Ip -like '10.*' -or $Ip -like '192.168.*' -or ($Ip -match '^172\.(1[6-9]|2\d|3[01])\.'))
+}
+
+# 공인(공개) IPv4 인지 판별 — 루프백/링크로컬/사설/IPv6 는 모두 제외
+function Test-IsPublicIPv4 {
+    param([string]$Ip)
+    if ([string]::IsNullOrWhiteSpace($Ip)) { return $false }
+    if ($Ip -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { return $false }
+    foreach ($oct in $Ip.Split('.')) { if ([int]$oct -gt 255) { return $false } }
+    if ($Ip -like '127.*' -or $Ip -like '0.*' -or $Ip -like '169.254.*') { return $false }
+    return (-not (Test-IsPrivateIPv4 $Ip))
 }
 
 try {
@@ -72,8 +98,42 @@ try {
         $networkArray += $netObj
     }
 
+    # 공인/사설 IPv4 판별 — 서버 SP(pApiAgentAutoRegisterBySK)의 ipv4_global/ipv4_local.
+    # Linux(giipAgentLinux/scripts/auto-discover-linux.sh)와 같은 판정 기준을 쓴다.
+    # 공인 IP 가 없으면 ipv4_global 은 빈 문자열로 둔다 — 서버 SP 가
+    # COALESCE(NULLIF(@ipv4_global,''), LSNIFGlobal) 로 마지막 알려진 값을 유지한다.
+    # (NAT 된 사내 PC 는 대부분 사설 IP 만 가진다 — 정상 동작이다)
+    $ipv4Global = ""
+    $ipv4Local = ""
+    foreach ($iface in $networkInterfaces) {
+        $ifaceIp = $iface.IPAddress
+        if ([string]::IsNullOrEmpty($ipv4Global) -and (Test-IsPublicIPv4 $ifaceIp)) {
+            $ipv4Global = $ifaceIp
+        }
+        if ([string]::IsNullOrEmpty($ipv4Local) -and (Test-IsPrivateIPv4 $ifaceIp)) {
+            $ipv4Local = $ifaceIp
+        }
+    }
+
     # ========================================
-    # 6. Software Inventory (Registry-based)
+    # 6. Disk Information
+    # ========================================
+    # Linux 는 df -BG / (루트 파일시스템 전체 크기, GB) 를 보낸다. Windows 에서는
+    # 시스템 볼륨($env:SystemDrive) 의 전체 크기로 대응시킨다(하드코딩 C: 금지).
+    $diskGB = 0
+    try {
+        $systemDrive = $env:SystemDrive
+        if ([string]::IsNullOrWhiteSpace($systemDrive)) { $systemDrive = "C:" }
+        $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$systemDrive'"
+        if ($disk -and $disk.Size) {
+            $diskGB = [int][math]::Round($disk.Size / 1GB)
+        }
+    } catch {
+        $diskGB = 0
+    }
+
+    # ========================================
+    # 7. Software Inventory (Registry-based)
     # ========================================
     $registryPaths = @(
         "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
@@ -127,7 +187,7 @@ try {
     }
 
     # ========================================
-    # 7. Service Status
+    # 8. Service Status
     # ========================================
     $servicesList = @()
     $maxServices = 50  # Limit to prevent huge JSON
@@ -214,8 +274,12 @@ try {
         hostname = $hostname
         os = $osFullName
         cpu = $cpuInfo
+        cpu_cores = $cpuLogical
         memory_gb = $memoryGB
+        disk_gb = $diskGB
         network = $networkArray
+        ipv4_global = $ipv4Global
+        ipv4_local = $ipv4Local
         software = $softwareList
         services = $servicesList
     }
@@ -230,8 +294,12 @@ try {
         hostname = $env:COMPUTERNAME
         os = "Unknown"
         cpu = "Unknown"
+        cpu_cores = 0
         memory_gb = 0
+        disk_gb = 0
         network = @()
+        ipv4_global = ""
+        ipv4_local = ""
         software = @()
         services = @()
         error = $_.Exception.Message

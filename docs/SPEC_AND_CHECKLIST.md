@@ -77,10 +77,49 @@ giipAgent의 핵심 기능 리스트 및 기술적 상세 사양입니다.
     실행한다(다음 5분 주기가 sync를 독립적으로 재시도).
 
 ## 3. 인프라 자동 검색 (Auto-Discovery)
+- **실행 경로**: Task Scheduler 작업 `"GIIP Auto-Discovery (v3)"` (6시간 주기, `TaskSchdReg.ps1` 가 등록)
+  → `giip-auto-discover-launcher.ps1` → `giip-auto-discover.ps1` → `giipscripts/auto-discover-win.ps1`
+  → `lib/Common.ps1:Invoke-GiipApiV2` → giipfaw SK 인증 디스패처 → giipdb
+  `SP/pApiAgentAutoRegisterBySK.sql` → `tLSSvr`(LSSpec*·LSNIFGlobal/LSNIFLocal) + `tKVS`
+  (`kFactor='auto_discover_result'`).
+  - giip #3559: 이 태스크는 등록만 되어 있었고 **한 번도 성공한 적이 없었다**(아래 두 결함).
+    고친 뒤에도 서버 SP 가 읽는 키가 빠지면 UPDATE 가 해당 컬럼을 NULL 로 덮어쓴다.
+- **설정 파일 위치**: `lib/Common.ps1:Get-GiipConfig` — `giipAgent.cfg` 를
+  **① 저장소 상위 폴더 → ② `%USERPROFILE%` → ③ 저장소 루트** 순으로 찾는다
+  (머리글에 `SAMPLE` 이 있는 파일은 템플릿으로 간주해 건너뛴다).
+  - giip #3559: 예전 `giip-auto-discover.ps1` 는 저장소 루트만 찾아 "Configuration file not
+    found" 로 종료했다(로그 기록보다 앞에서 끝나서 실패 흔적조차 안 남았다).
+    → 저장소 표준 로더(`Get-GiipConfig`)를 쓰도록 수정.
+- **API 호출 경로**: `Invoke-GiipApiV2 -Config <cfg> -CommandText "AgentAutoRegister hostname jsondata" -JsonData <수집 JSON>`
+  - 엔드포인트는 cfg 의 **`apiaddrv2`**(= SK 인증 디스패처 URL, 예: `.../api/giipApiSk2`).
+    `text` 는 "명령어 + 파라미터 이름" 이고 실제 값은 `jsondata` 에서 치환된다.
+  - giip #3559: 예전 코드는 cfg 에 없는 키(`apiaddr`)와 dispatcher 가 읽지 않는 쿼리 파라미터
+    (`cmd=`)를 써서 AK 기반 `giipApi` 로 갔다 → 위 표준 경로로 교체.
+  - **성공 판정**: SP 응답의 `Proc_MSG` 가 `'200|*'` 이거나 `RstVal` 이 `200` 이어야 성공이다
+    (7장의 "API 호출 실패 보고 원칙" 적용 — 응답을 확인하지 않고 성공 로그를 남기지 않는다).
+  - **최초 등록**: cfg 의 `lssn` 이 `0` 이고 응답에 `lssn` 이 있으면
+    `Update-ConfigLssn` 으로 cfg 를 갱신한다(저장소 상위 폴더 → `%USERPROFILE%` 순).
+  - **로그**: `<저장소 상위>\giipLogs\giip-auto-discover_<yyyyMMdd>.log` (자동탐색 전용) +
+    `lib/Common.ps1:Write-GiipLog` 의 `<저장소 상위>\giipLogs\giipAgentWin_<yyyyMMdd>.log`.
 - **데이터 수집**: `giipscripts/auto-discover-win.ps1`
   - `Get-CimInstance`, `Get-NetIPAddress`, `Get-Service` 등을 사용하여 시스템/네트워크/소프트웨어 정보를 JSON으로 생성.
-- **데이터 전송**: `giip-auto-discover.ps1`
-  - 수집된 데이터를 `AgentAutoRegister` API를 통해 중앙 서버로 전송.
+- **서버 SP(`pApiAgentAutoRegisterBySK.sql`)가 읽는 JSON 키 8개** — 하나라도 빠지면
+  UPDATE 가 해당 컬럼을 NULL 로 덮어쓴다(heartbeat 갱신):
+  | 키 | 의미 | Windows 수집 방법 | 비어 있을 때 서버 동작 |
+  |---|---|---|---|
+  | `os` | OS 이름+버전 | `Win32_OperatingSystem` | — |
+  | `cpu` | CPU 모델 문자열 | `Win32_Processor` | — |
+  | `cpu_cores` | **논리** CPU 수 (`LSSpecCPUs`) | `NumberOfLogicalProcessors` | `NULL` 로 덮어씀 |
+  | `memory_gb` | 메모리 GB (`LSSpecRAMGB`) | `TotalVisibleMemorySize` | — |
+  | `disk_gb` | 시스템 볼륨 전체 GB (`LSSpecDiskSizeGB`) | `Win32_LogicalDisk`(`$env:SystemDrive`) | `NULL` 로 덮어씀 |
+  | `agent_version` | 에이전트 버전 (`LSAgentVer`) | 호출부(`giip-auto-discover.ps1`)가 추가 | `NULL` 로 덮어씀 |
+  | `ipv4_global` | 공인 IPv4 (`LSNIFGlobal`) | NIC IPv4 중 공인 IP 첫 개 | **빈 문자열이면 서버가 마지막 값을 유지** (`COALESCE(NULLIF(...), LSNIFGlobal)`) |
+  | `ipv4_local` | 사설 IPv4 (`LSNIFLocal`) | NIC IPv4 중 사설 IP 첫 개 | `NULL` 로 덮어씀 |
+  - `ipv4_global` 판정은 Linux 에이전트(`giipAgentLinux/scripts/auto-discover-linux.sh`)와 같은 기준이다.
+    NAT 된 사내 PC 에서는 공인 IP 가 없으므로 **빈 문자열**이 정상값이다(외부 echo 조회는 하지 않는다).
+  - 판정 기준: 사설 = `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` /
+    공인 = 루프백(`127.*`)·링크로컬(`169.254.*`)·`0.*`·사설을 제외한 나머지.
+  - **키를 추가/이름을 바꾸려면 이 표와 `giipdb/SP/pApiAgentAutoRegisterBySK.sql` 를 함께 고쳐야 한다.**
 
 ## 4. 데이터베이스 및 프로세스 모니터링
 - **데이터베이스 모니터링 (DbMonitor)**: `giipscripts/modules/DbMonitor.ps1`

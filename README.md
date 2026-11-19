@@ -78,8 +78,12 @@ notepad giipAgent.cfg
 sk="Secret-Key"              # GIIP 포털에서 발급받은 키
 lssn="0"                    # 서버 번호 (0 = 자동 할당)
 giipagentdelay="60"         # 실행 간격 (초)
-apiaddr="https://..."       # API 주소
+apiaddrv2="https://.../api/giipApiSk2"   # API 주소 (SK 인증 디스패처 URL)
 ```
+> ⚠️ 설정 키 이름은 **`apiaddrv2`** 다. `apiaddr` 는 코드가 읽지 않는 키다
+> (예전에 자동탐색만 이 키를 잘못 쓰다가 API 호출이 조용히 실패했다 — giip #3559).
+> 설정 파일 자체는 저장소 **밖**(상위 폴더 또는 `%USERPROFILE%`)에 두어야 한다 — 아래
+> "레포 / 기밀 분리 구조" 참고.
 
 ### 4. 등록
 
@@ -183,6 +187,38 @@ $env:LOCALAPPDATA\GIIP\logs\
 > ⚠️ **자주 하는 오해:** `giipAgent/` **루트**에서 `git status`를 돌리면 "not a git repository"가 나온다.
 > 그렇다고 스크립트가 비-git인 게 **아니다** — 저장소는 한 단계 아래 `giipAgent/giipAgentWin/`이다.
 > 정본 코드는 `LowyShin/giipAgentWin`에 있고, 기밀만 부모 폴더(비-git)에 있다.
+
+## 🔍 인프라 자동 검색 (Auto-Discovery)
+
+`giipscripts/auto-discover-win.ps1` — 이 PC(서버)의 OS·CPU·메모리·디스크·소프트웨어·서비스·네트워크를
+수집해 JSON으로 만들고, `giip-auto-discover.ps1` 가 GIIP 포털 중앙 서버에 **서버를 자동 등록**한다
+(`AgentAutoRegister` API). 등록/갱신되는 항목:
+
+| 서버 항목 | 값 | 비고 |
+|---|---|---|
+| `LSSpecCPUs` | 논리 CPU 수 | |
+| `LSSpecRAMGB` | 메모리 GB | |
+| `LSSpecDiskSizeGB` | 시스템 볼륨 전체 GB | |
+| `LSNIFLocal` | 사설 IPv4 | |
+| `LSNIFGlobal` | 공인 IPv4 | **NAT 된 PC 는 공인 IP 가 없어 빈 값으로 전송** — 서버는 마지막 알려진 값을 유지한다 |
+
+**사용 방법**
+
+1. `giipAgent.cfg` 를 저장소 밖(상위 폴더 또는 `%USERPROFILE%`)에 두고 `sk`·`lssn`·`apiaddrv2` 를 채운다.
+2. `.\TaskSchdReg.ps1` 을 실행하면 `"GIIP Auto-Discovery (v3)"` 예약 작업이 **6시간 주기**로 등록된다.
+3. 상태 확인:
+   ```powershell
+   Get-ScheduledTask -TaskName "GIIP Auto-Discovery (v3)"
+   Get-ScheduledTask -TaskName "GIIP Auto-Discovery (v3)" | Get-ScheduledTaskInfo
+   ```
+4. 로그: `<저장소 상위>\giipLogs\giip-auto-discover_<yyyyMMdd>.log`
+5. 수동 점검 — **서버에는 아무것도 보내지 않는** 수집만 실행:
+   ```powershell
+   .\giipscripts\auto-discover-win.ps1
+   ```
+   (`giip-auto-discover.ps1` 를 직접 실행하면 중앙 서버에 실제로 등록된다 — 주의)
+
+> 상세 사양: `docs/SPEC_AND_CHECKLIST.md` §3 (설정 파일 위치, API 호출 경로, 서버 SP 가 읽는 JSON 키 8개).
 
 ## 💰 Azure 비용 수집기 (멀티유저)
 
