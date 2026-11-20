@@ -134,6 +134,18 @@ if ($Config['cqetimeoutsec']) {
     }
 }
 
+# giip #4296: stdout/stderr 꼬리 전송 용량(KB). giipAgent.cfg 의 'cqeoutputtailkb'
+# -> 없으면 기본 8KB. 0 이면 cqeresult 출력 전송을 생략한다(§5.7.2-2).
+$outputTailKb = 8
+if ($null -ne $Config['cqeoutputtailkb'] -and "$($Config['cqeoutputtailkb'])".Trim() -ne '') {
+    $parsedKb = -1
+    if ([int]::TryParse("$($Config['cqeoutputtailkb'])".Trim(), [ref]$parsedKb) -and $parsedKb -ge 0) {
+        $outputTailKb = $parsedKb
+    } else {
+        Write-GiipLog "WARN" "[CqeRun] Invalid cqeoutputtailkb='$($Config['cqeoutputtailkb'])' - falling back to ${outputTailKb}KB."
+    }
+}
+
 if (-not (Get-GiipScriptTypeInfo -Type $scriptType)) {
     Write-GiipLog "ERROR" "[CqeRun] Unsupported script_type='$rawScriptType' (normalized='$scriptType', mslsn=$mslsn mssn=$mssn)."
     Save-ExecutionLog -Config $Config -EventType "error" -DetailsObj @{
@@ -151,7 +163,10 @@ Write-GiipLog "INFO" "[CqeRun] Executing CQE task mslsn=$mslsn mssn=$mssn script
 
 $startTime = Get-Date
 $execResult = Invoke-ScriptBlock -Type $scriptType -Body $msBody -TimeoutSec $timeoutSec
-$durationSec = [int][Math]::Round(((Get-Date) - $startTime).TotalSeconds)
+$endTime = Get-Date
+$durationSec = [int][Math]::Round(($endTime - $startTime).TotalSeconds)
+$startTimeStr = $startTime.ToString("yyyy-MM-dd HH:mm:ss")
+$endTimeStr = $endTime.ToString("yyyy-MM-dd HH:mm:ss")
 
 $outputSnippet = "$($execResult.Output)"
 if ($outputSnippet.Length -gt 2000) { $outputSnippet = $outputSnippet.Substring(0, 2000) }
@@ -180,5 +195,50 @@ Save-ExecutionLog -Config $Config -EventType "script_execution" -DetailsObj @{
     success                = [bool]$execResult.Success
     output                 = $outputSnippet
 } | Out-Null
+
+# ---------------------------------------------------------------------------
+# 4b) giip #4296: 콘솔 조회 정본인 cqeresult 행을 병행 기록한다(위 giipagent
+#     이벤트는 호환을 위해 그대로 둔다). stdout/stderr 를 분리해 각각 마지막
+#     $outputTailKb KB 만 보낸다. 장애 원인은 대개 출력 끝부분에 있기 때문이다.
+#     $outputTailKb=0 이면 출력 전송을 생략한다(§5.7.2-2).
+#
+#     ui 타입/타임아웃/에러 경로는 StdOut/StdErr 가 없으므로 합본 Output 을
+#     stdout 쪽에 넣어 유실되지 않게 한다(stderr 는 빈 값).
+# ---------------------------------------------------------------------------
+function Get-GiipTail {
+    param([string]$Text, [int]$TailKb)
+    if ([string]::IsNullOrEmpty($Text)) { return "" }
+    $maxChars = $TailKb * 1024
+    if ($Text.Length -le $maxChars) { return $Text }
+    return $Text.Substring($Text.Length - $maxChars)
+}
+
+if ($outputTailKb -gt 0) {
+    if ($null -ne $execResult.StdOut -or $null -ne $execResult.StdErr) {
+        $stdoutRaw = "$($execResult.StdOut)"
+        $stderrRaw = "$($execResult.StdErr)"
+    } else {
+        # 분리 캡처가 없는 경로(ui/timeout/error): 합본을 stdout 으로 보존.
+        $stdoutRaw = "$($execResult.Output)"
+        $stderrRaw = ""
+    }
+
+    $cqeStatus = if ($execResult.Mode -eq 'ui') { "started" }
+                 elseif ($execResult.Success) { "success" }
+                 elseif ($execResult.ExitCode -eq -1) { "failed" }
+                 else { "failed" }
+
+    Save-CqeResult -Config $Config `
+        -Mslsn $mslsn -Mssn $mssn `
+        -ScriptName "" `
+        -Status $cqeStatus `
+        -ExitCode ([int]$execResult.ExitCode) `
+        -StdOut (Get-GiipTail -Text $stdoutRaw -TailKb $outputTailKb) `
+        -StdErr (Get-GiipTail -Text $stderrRaw -TailKb $outputTailKb) `
+        -StartTime $startTimeStr -EndTime $endTimeStr `
+        -DurationSeconds $durationSec | Out-Null
+} else {
+    Write-GiipLog "INFO" "[CqeRun] cqeoutputtailkb=0 - skipping cqeresult output upload (mslsn=$mslsn)."
+}
 
 if ($execResult.Success) { exit 0 } else { exit 1 }
