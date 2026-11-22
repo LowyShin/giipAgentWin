@@ -9,10 +9,129 @@ giipAgent의 핵심 기능 리스트 및 기술적 상세 사양입니다.
 > 그 문서에는 도달 불가 상태로 숨어 있던 결함 7건과 수정 내역도 함께 기록돼 있습니다.
 
 ## 1. 코어 에이전트 및 오케스트레이션
-- **Main Entry Point**: `giipAgent3.ps1`
-  - 에이전트 실행의 주 진입점. 라이브러리 로드 및 각 모듈(`CleanState`, `CqeGet`, `CqeRun`, `DbMonitor`, `ProcessList` ...)을 순차적으로 실행.
-  - 실행 순서: Step 1 `CleanState` → Step 2 `CqeGet` → **Step 2.5 `CqeRun`** → Step 3 `DbMonitor` → Step 4 `ProcessList` → Step 5 `DbConnectionList` → Step 6 `HostConnectionList` → Step 7 `CollectEnhancedMetrics` → Step 8 `CollectDockerMetrics`.
-- **상태 관리 (State Management)**: `giipscripts/modules/CleanState.ps1`
+
+### 1.1 구조 원칙 (giip #6163 — Lowy 지시 2026-11-22)
+- **메인 태스크(슈퍼바이저)는 가볍고 안정적으로 유지**한다. 실제 작업은 언제든 **종료·리셋**할 수 있는
+  서브 태스크(워커)가 수행한다.
+- 한 Step 이 멈춰도 **그 Step(과 그 자식 프로세스 트리)만** 강제 종료되고 **다음 Step 은 계속**된다
+  (giip #5924 — Step 7 의 행 하나가 3일간 전체 사이클을 정지시킨 사고의 근본 해결).
+- 슈퍼바이저는 무거운 작업(WMI 조회, 외부 도구 실행, 대용량 수집)을 **직접 하지 않는다** —
+  그 일은 전부 워커 프로세스(= Step 모듈) 안에서 일어난다.
+
+### 1.2 진입점 계층과 Step 실행 순서
+- **Task Scheduler 진입점**: `TaskSchdReg.ps1` 가 등록하는 예약 작업 액션
+  `conhost.exe --headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File giipAgent3-launcher.ps1`
+  → `giipAgent3-launcher.ps1` (= `git-auto-sync.ps1` 실행 후 `giipAgent3.ps1` 실행)
+- **메인 태스크(슈퍼바이저)**: `giipAgent3.ps1`
+  - Step 1~8 을 **직접 실행하지 않는다**. 각 Step 을 별도 프로세스(워커 = `giipAgentWorker.ps1`)로 띄워 실행한다.
+  - **실행 순서(기존 목록 유지)**: Step 1 `CleanState` → Step 2 `CqeGet` → **Step 2.5 `CqeRun`** →
+    Step 3 `DbMonitor` → Step 4 `ProcessList` → Step 5 `DbConnectionList` → Step 6 `HostConnectionList` →
+    Step 7 `CollectEnhancedMetrics` → Step 8 `CollectDockerMetrics` (총 9개 Step).
+  - **바뀐 것은 실행 방식뿐**: 각 Step 은 이제 같은 프로세스 안이 아니라 **워커 프로세스**에서 실행된다.
+  - Step 간 데이터 전달은 전부 **파일 기반**(`data/queue.json` 등)이라 프로세스가 나뉘어도 흐름이 유지된다
+    (Step 2 가 만든 큐를 Step 2.5 가 소비하고, Step 2.5 는 실행 전에 큐를 `data/queue_last.json` 으로 옮겨 소비한다).
+- **워커 호스트**: `giipAgentWorker.ps1` (아래 1.4)
+
+### 1.3 슈퍼바이저의 책임 (`giipAgent3.ps1`)
+| 책임 | 구현 | 비고 |
+|---|---|---|
+| 락(중복 실행 방지) | `lib/ProcessLock.ps1` 의 `Enter-GiipAgentLock` / `Exit-GiipAgentLock` | 락 파일 `giipAgent3.lock`, stale 기준 30분. 종료 시 `finally` 에서 항상 해제 |
+| 실행 이력(RunStart/RunEnd) | `lib/SchedulerAgentRun.ps1` 의 `Invoke-SchedulerAgentRunStart` / `Invoke-SchedulerAgentRunEnd` | RunStart 가 실패/스킵됐으면 RunEnd 는 호출하지 않는다(짝이 안 맞는 호출 방지) |
+| 워커 기동·감시·강제 종료 | `giipAgent3.ps1` 의 `Invoke-GiipStepWorker` | 워커 기동 → 제한 시간 대기 → 필요 시 프로세스 트리 강제 종료 |
+| Step 순서·타임아웃 결정 | `giipAgent3.ps1` 의 `$steps` 목록 + `steptimeout_*` 설정 | 아래 1.5 |
+
+- **큐 조회·소비는 Step 워커의 몫**이다: Step 2 `CqeGet` 워커가 `CQEQueueGet` 으로 큐를 받아
+  `data/queue.json` 에 쓰고, Step 2.5 `CqeRun` 워커가 그 큐를 소비한다.
+  **슈퍼바이저는 CQE API 를 직접 호출하지 않는다.**
+- 슈퍼바이저가 직접 하는 외부 통신은 `RunStart`/`RunEnd` 뿐이고(WMI·외부 도구·대용량 수집 없음),
+  수집 작업은 전부 워커(= Step 모듈) 안에서 일어난다.
+- 라이브러리 로드 순서(필수): `lib/Common.ps1` → `lib/KVS.ps1`(또는 `Kvs.ps1`) → `lib/ProcessLock.ps1` →
+  `lib/SchedulerAgentRegister.ps1` → `lib/SchedulerAgentRun.ps1`.
+
+### 1.4 워커 호스트 (`giipAgentWorker.ps1`)
+- **인자**: `-StepName`(로그용 Step 이름), `-ModuleScript`(실행할 모듈 경로), `-ResultFile`(선택).
+- **슈퍼바이저와 동일한 초기화 환경**을 만든다 — `$Global:BaseDir`, `giipscripts/modules`, `lib` 경로,
+  `lib/Common.ps1` + KVS 로드, `[Console]::OutputEncoding = UTF-8`(한글 깨짐 방지), `Get-GiipConfig`.
+  - Step 모듈 중 `ProcessList.ps1` 은 `$Global:BaseDir` 를, `CleanState.ps1` 은 `Write-GiipLog` 를
+    상위 스코프에서 물려받아 쓰므로 이 재현이 필수다.
+- **모듈 1개만** `&` 로 실행하고 그 종료코드로 종료한다. 모듈이 예외를 던지면 워커는 `1` 로 끝난다.
+  (모듈이 `exit` 을 호출하지 않으면 마지막 native 명령의 코드를 물려받지 않도록 `$LASTEXITCODE` 를 먼저 0 으로 초기화한다)
+- **락 획득과 RunStart/RunEnd 는 하지 않는다** — 슈퍼바이저의 일이다(워커가 하면 실행 이력이 두벌 생긴다).
+  그래서 워커는 `ProcessLock`/`SchedulerAgentRegister`/`SchedulerAgentRun` 을 로드하지 않는다.
+- 워커 기동 방식은 슈퍼바이저가 등록한 Task Scheduler 진입점과 **똑같은 패턴**이다
+  (`conhost.exe --headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File giipAgentWorker.ps1 ...`,
+  AGENTS.md 2번 "진입점과 창 숨김 방식은 고정"). vbs/LOLBin/`-EncodedCommand`/`-WindowStyle Hidden` 은 쓰지 않는다.
+- **결과 파일 규약**: 워커는 `%TEMP%/giip_step_<Step 라벨(숫자만)>_<토큰>.json` 에 JSON 을 남긴다
+  (`step`/`pid`/`state`/`exitCode`/`at`).
+  | `state` | 기록 시점 | `exitCode` |
+  |---|---|---|
+  | `running` | 기동 직후(자기 PID) | `null` |
+  | `finished` | 종료 직후 | 실제 종료코드 |
+  - 목적: 래퍼(`conhost.exe --headless`)가 자식의 종료코드를 그대로 되돌려주지 않아도
+    **워커가 직접 기록한 종료코드**로 Step 실패를 판정할 수 있게 한다. 타임아웃 때 워커 PID 를
+    직접 kill 하는 용도로도 쓴다.
+  - 기록 실패는 best-effort 다(슈퍼바이저가 프로세스 종료코드로 대체 판정한다).
+
+### 1.5 Step 별 타임아웃
+- **기본값**(코드 `giipAgent3.ps1` 의 `$steps` 목록, 단위 초):
+
+  | Step | 모듈 | 기본 타임아웃 | 설정 키(`giipAgent.cfg`) |
+  |---|---|---|---|
+  | 1 | `CleanState` | 60 | `steptimeout_cleanstate` |
+  | 2 | `CqeGet` | 90 | `steptimeout_cqeget` |
+  | 2.5 | `CqeRun` | 720 (= `cqetimeoutsec` 600 + 120) | `steptimeout_cqerun` |
+  | 3 | `DbMonitor` | 420 | `steptimeout_dbmonitor` |
+  | 4 | `ProcessList` | 120 | `steptimeout_processlist` |
+  | 5 | `DbConnectionList` | 180 | `steptimeout_dbconnectionlist` |
+  | 6 | `HostConnectionList` | 180 | `steptimeout_hostconnectionlist` |
+  | 7 | `CollectEnhancedMetrics` | 240 | `steptimeout_collectenhancedmetrics` |
+  | 8 | `CollectDockerMetrics` | 180 | `steptimeout_collectdockermetrics` |
+
+- 키 이름 규칙: `steptimeout_<Step 모듈명 소문자>` (예: `steptimeout_dbmonitor = "600"`).
+  키가 있으면 해당 Step 의 기본값을 대체하고, 없으면 기본값을 쓴다.
+- `CqeRun` 만 기본값 계산이 다르다: **`cqetimeoutsec`(기본 600) + 120 = 720**.
+  `cqetimeoutsec` 는 `CqeRun` 이 **CQE 스크립트 1건**을 실행하는 시간 제한으로도 쓰이므로(§2),
+  워커 전체 시간 제한(기본 720)과는 구분해야 한다. `steptimeout_cqerun` 을 주면 이 계산값을 대체한다.
+- 값이 양의 정수가 아니면 WARN 로그를 남기고 **기본값을 유지**한다.
+
+### 1.6 실패 처리
+- **타임아웃**(워커가 제한 시간 안에 끝나지 않음):
+  1. `taskkill.exe /PID <슈퍼바이저가 띄운 프로세스 id(conhost 래퍼)> /T /F` 로
+     **프로세스 트리 전체**(워커와 그 자식 프로세스 포함)를 강제 종료한다.
+  2. 워커 PID 를 추가로 kill 한다 — 래퍼가 먼저 죽어 워커가 고아(orphan)로 남는 경우 대비.
+  3. 그래도 남아 있으면 `Stop-Process -Id <id> -Force` 로 마무리한다.
+  4. `[Step N] Worker timeout after {n}s - killed, continuing (pid=...)` ERROR 로그를 남기고 **다음 Step 을 계속**한다.
+     (정리가 실패해도 `kill failed` / `worker still alive` 메시지를 남긴 뒤 계속 진행한다)
+- **워커 종료코드 ≠ 0**: `[Step N] Worker failed (exit code {code}, duration={n}s) - continuing` ERROR 로그를
+  남기고 **기록만 하고 다음 Step 을 계속**한다. 래퍼와 워커의 종료코드가 다르면
+  `Worker exit code mismatch (launcher=..., worker=...)` WARN 후 **워커 값**을 쓴다.
+- **Step 모듈 파일이 없으면**: 조용히 건너뛴다(`Skipped`) — 배포 이상으로 전체 사이클을 죽이지 않는다.
+  건너뛴 Step 은 **실패로 세지 않으므로**(종료코드·RunEnd 상태에 영향 없음) 배포 오류 신호로
+  로그의 `Module not found ... skipped` WARN 을 본다.
+- **에이전트 종료코드**: 실패/타임아웃이 하나라도 있으면 `exit 1`, 없으면 `exit 0`.
+- **RunEnd 상태**(`lib/SchedulerAgentRun.ps1` 의 `ValidateSet` = SP `pApiSchedulerAgentRunEndBySK` 의 `@status`
+  지원값과 동일 — 새 값을 만들지 않는다):
+
+  | 조건 | RunEnd 상태 | 종료코드 |
+  |---|---|---|
+  | 타임아웃 Step 있음 | `TIMED_OUT` | 1 |
+  | 그 외 실패 Step 있음 | `FAILED` | 1 |
+  | 실패 없음 | `SUCCEEDED` | 0 |
+
+- **실패 Step 목록 summary**: `timedOut=Step3:DbMonitor,failed=Step2:CqeGet:exit3` 형태(콤마 구분)로
+  RunEnd 의 `summary` 파라미터에 실린다. `lib/SchedulerAgentRun.ps1` 이 1000자로 절단한다.
+- **검증**: `tests/Test-SupervisorWorker.ps1` 가 스텁 모듈로 (1) 타임아웃 강제 종료 후 다음 Step 진행,
+  (2) 종료코드 전파, (3) 래퍼가 종료코드를 먹는 경우, (4) 정상 경로를 확인한다.
+
+### 1.7 Phase 2 (예정 — 현재 미구현)
+아래는 **구현된 것이 아니라 예정된 항목**이다(현행 구현 범위는 1단계 = 프로세스 분리까지다).
+- **CQE 제어 명령으로 워커 리셋/종료**: 큐(CQE)로 들어오는 제어 명령이 실행 중인 Step 워커를
+  중지·리셋할 수 있게 하는 제어 채널. (구현 예정)
+- **워커 단위 실행 기록**: Step 별 PID·종료코드·소요시간을 서버 쪽 실행 이력에 별도 단위로 남기는 것.
+  현행 실행 이력은 **사이클 단위**(RunStart/RunEnd) 하나뿐이다. (구현 예정)
+
+### 1.8 공통 라이브러리 (모든 Step 공통)
+- **상태 관리 (State Management)**: `giipscripts/modules/CleanState.ps1` (Step 1)
   - `data/` 디렉토리 내의 이전 실행 파일(`queue.json`, `task_result.json` 등) 삭제 및 7일 경과된 로그 정리.
   - giip #2546: **내용이 있는 `queue.json`을 지우게 되면 WARN 로그**를 남긴다. 정상 흐름이라면 `CqeRun`이 같은 실행 안에서 이미 소비했어야 하므로, 이 WARN 은 "받아만 놓고 실행하지 않은 작업을 버리는 중"이라는 회귀 신호다.
 - **설정 로드 (Config Loader)**: `lib/Common.ps1` -> `Get-GiipConfig`
@@ -189,13 +308,24 @@ giipAgent의 핵심 기능 리스트 및 기술적 상세 사양입니다.
 ## 🔍 1단계: 코드 내용 검증 (Content Verification)
 - [x] **버전 확인**: `git-auto-sync.ps1`의 버전이 최신(현재 v1.3.9)이며 `Last Updated`가 오늘 날짜인가?
 - [x] **기본 브랜치 확인**: 코드 내 `$targetBranch = "real"`로 명시되어 있는가? (절대 `main`이 아님을 확인)
-- [x] **우선순위 확인**: `Find-Config` 함수에서 `Split-Path $StartPath -Parent` (상위 폴더) 탐색이 가장 먼저 실행되는가?
-- [x] **샘플 필터링**: 로컬 디렉토리의 `giipAgent.cfg` 탐색 시 "SAMPLE" 문구가 포함된 파일을 무시하는 로직이 작동하는가?
+- [x] **우선순위 확인**: `lib/Common.ps1:Get-GiipConfig` 가 `Split-Path -Path <base> -Parent` (상위 폴더) 탐색을 가장 먼저 실행하는가?
+- [x] **샘플 필터링**: 상위 폴더 / `%USERPROFILE%` 에서 `giipAgent.cfg` 를 찾을 때 머리글 10줄에 "SAMPLE" 이 있으면 무시하는 로직이 작동하는가?
+  (저장소 루트 3순위 탐색에는 이 필터가 없다 — 그 위치의 파일은 예제여도 그대로 읽는다)
 
 ## 🛠 2단계: 기능 및 문법 검증 (Functional Test)
 - [x] **PowerShell 오타**: `@@{` 와 같은 해시테이블 문법 오류가 없는가?
-- [x] **로컬 실행**: `.\giipAgent3.bat` 또는 `.\gitautosync.bat`을 실행하여 `Exit code: 0`을 확인했는가?
+- [x] **로컬 실행**: `.\giipAgent3.bat` 또는 `.\gitautosync.bat`을 실행하고 종료코드를 확인했는가?
+  - **종료코드 판정(giip #6163)**: `giipAgent3.ps1`(슈퍼바이저)의 종료코드는 **모든 Step 이 성공했을 때만 0** 이고,
+    **Step 실패나 타임아웃이 하나라도 있으면 1** 이다(그 뒤의 Step 은 계속 실행된다).
+    그래서 `Exit code: 0` 은 "무조건 기대"하는 값이 아니라 "0 이면 전 Step 성공 / 1 이면 로그에서
+    어떤 Step 이 실패·타임아웃인지 확인" 으로 읽는다.
+  - `.\gitautosync.bat` 은 sync 만 돌리므로 그 종료코드는 sync 결과(0/1)일 뿐 Step 결과가 아니다.
+- [x] **슈퍼바이저/워커 분리 확인**: `giipAgent3.ps1` 가 Step 을 직접 실행하지 않고
+  `giipAgentWorker.ps1` 를 별도 프로세스로 띄우는지(Step 별 워커 PID 가 결과 파일/로그에 남는지) 확인했는가?
 - [x] **로그 확인**: 실행 로그(`logs/`)에 타겟 브랜치가 `real`로 정확히 표시되는가?
+  - 에이전트 로그(`<저장소 상위>\giipLogs\giipAgentWin_<yyyyMMdd>.log`)에는 Step 별로
+    `[Step N] Completed (exit=0, duration=Ns)` / `Worker failed (exit code ...)` /
+    `Worker timeout after Ns - killed, continuing` 이 남는다 — 어느 Step 이 얼마나 걸렸는지 여기서 특정한다.
 
 ## 🚀 3단계: 배포 전 최종 체크 (Pre-Push Check)
 - [x] **Git Branch 확인**: `git branch` 명령으로 현재 위치가 `main`임을 확인했는가?
