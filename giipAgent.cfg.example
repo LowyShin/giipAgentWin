@@ -44,6 +44,27 @@ branch = "real"
 #    stdout 캡처도, 종료 코드도 없다. 실행 이력에는 "기동 성공/실패"만 남는다.
 
 # ===================================================================
+# Step 별 워커 타임아웃 (giip #6163)
+# ===================================================================
+# giipAgent3.ps1(슈퍼바이저)는 각 Step 을 별도 프로세스(giipAgentWorker.ps1)로
+# 실행한다. Step 이 멈추면 그 Step 만 강제 종료하고 다음 Step 으로 진행한다
+# (giip #5924 - Step 7 한 행이 3일간 전체 사이클을 정지시킨 사고).
+#
+# 아래 키가 있으면 해당 Step 의 기본값을 대체한다(초). 키가 없으면 기본값 사용.
+#   steptimeout_cleanstate             기본  60
+#   steptimeout_cqeget                 기본  90
+#   steptimeout_cqerun                 기본 720 (= cqetimeoutsec(기본 600) + 120)
+#   steptimeout_dbmonitor              기본 420
+#   steptimeout_processlist            기본 120
+#   steptimeout_dbconnectionlist       기본 180
+#   steptimeout_hostconnectionlist     기본 180
+#   steptimeout_collectenhancedmetrics 기본 240
+#   steptimeout_collectdockermetrics   기본 180
+#
+# 예) DB 수집이 큰 서버에서 늘리고 싶을 때:
+# steptimeout_dbmonitor = "600"
+
+# ===================================================================
 # Azure Cost Collector (azure-cost-put-win.ps1)
 # ===================================================================
 # Used for UNATTENDED / scheduled cost collection via a service principal.
