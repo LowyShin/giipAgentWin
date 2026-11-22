@@ -15,6 +15,12 @@ $LibDir = Join-Path $AgentRoot "lib"
 $BufferRetentionDays = 7
 $BufferMaxCount = 500
 
+# giip #6162: upper bound (seconds) applied to every CIM/WMI query below.
+# A WMI provider that stops responding used to block the call forever, and
+# that single hang stalled the whole agent cycle -- each metric section is
+# now isolated in its own try/catch so a timeout only skips that section.
+$CimTimeoutSec = 30
+
 # Load Libraries
 try {
     . (Join-Path $LibDir "Common.ps1")
@@ -95,134 +101,229 @@ try {
 }
 
 try {
-    # 1. cpu_usage_detail
-    $cpu = Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'"
+    # ==========================================================================
+    # giip #6162: every metric section below runs inside its own try/catch.
+    # A CIM/WMI query that times out (or fails for any other reason) is logged
+    # as WARN, that section alone is skipped, and the remaining sections are
+    # still collected and uploaded. Before this change one unresponsive WMI
+    # provider hung the whole script, which -- combined with Task Scheduler
+    # MultipleInstances=IgnoreNew -- stalled the entire agent cycle.
+    #
+    # The uploaded payload keeps exactly the same shape: every key is always
+    # present, and a skipped section reports neutral defaults (0 / empty list /
+    # "N/A") instead of disappearing from the payload.
+    # ==========================================================================
+    $cpu = $null
     $cpuDetailObj = @{
-        user_pct     = [double]$cpu.PercentUserTime
-        system_pct   = [double]$cpu.PercentPrivilegedTime
-        idle_pct     = [double]$cpu.PercentIdleTime
+        user_pct     = 0.0
+        system_pct   = 0.0
+        idle_pct     = 0.0
         iowait_pct   = 0.0
         steal_pct    = 0.0
     }
-
-    # 2. mem_usage_detail
-    $cs = Get-CimInstance Win32_ComputerSystem
-    $totalMem = $cs.TotalPhysicalMemory
-    $totalMb = [math]::Round($totalMem / 1MB)
-    $perfMem = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory
-    $availMb = [double]$perfMem.AvailableMBytes
-    $usedMb = $totalMb - $availMb
-    
+    $totalMem = 0
+    $totalMb = 0.0
+    $availMb = 0.0
+    $usedMb = 0.0
     $memDetailObj = @{
-        total_mb   = $totalMb
-        used_mb    = $usedMb
-        free_mb    = $availMb
+        total_mb   = 0.0
+        used_mb    = 0.0
+        free_mb    = 0.0
         shared_mb  = 0
         buffers_mb = 0
         cached_mb  = 0
     }
+    $diskPartitionsList = @()
+    $ioStatsList = @()
+    $netTrafficList = @()
+    $topProcsList = @()
+    $topMemProcsList = @()
+
+    # 1. cpu_usage_detail
+    try {
+        $cpu = Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'" -OperationTimeoutSec $CimTimeoutSec
+        $cpuDetailObj = @{
+            user_pct     = [double]$cpu.PercentUserTime
+            system_pct   = [double]$cpu.PercentPrivilegedTime
+            idle_pct     = [double]$cpu.PercentIdleTime
+            iowait_pct   = 0.0
+            steal_pct    = 0.0
+        }
+    }
+    catch {
+        Write-GiipLog "WARN" "[CollectEnhancedMetrics] Section 'cpu_usage_detail' failed, skipped: $_"
+    }
+
+    # 2. mem_usage_detail
+    try {
+        $cs = Get-CimInstance Win32_ComputerSystem -OperationTimeoutSec $CimTimeoutSec
+        $totalMem = $cs.TotalPhysicalMemory
+        $totalMb = [math]::Round($totalMem / 1MB)
+        $perfMem = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -OperationTimeoutSec $CimTimeoutSec
+        $availMb = [double]$perfMem.AvailableMBytes
+        $usedMb = $totalMb - $availMb
+
+        $memDetailObj = @{
+            total_mb   = $totalMb
+            used_mb    = $usedMb
+            free_mb    = $availMb
+            shared_mb  = 0
+            buffers_mb = 0
+            cached_mb  = 0
+        }
+    }
+    catch {
+        Write-GiipLog "WARN" "[CollectEnhancedMetrics] Section 'mem_usage_detail' failed, skipped: $_"
+    }
 
     # 3. disk_usage_partition
-    $disks = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3"
-    $diskPartitionsList = @()
-    foreach ($disk in $disks) {
-        $size = $disk.Size
-        $free = $disk.FreeSpace
-        if ($size -gt 0) {
-            $used = $size - $free
-            $pct = [math]::Round(($used / $size) * 100, 2)
-            $diskPartitionsList += @{
-                device   = $disk.DeviceID
-                total    = ("{0:N1}G" -f ($size / 1GB))
-                used     = ("{0:N1}G" -f ($used / 1GB))
-                avail    = ("{0:N1}G" -f ($free / 1GB))
-                use_pct  = ("{0}%" -f $pct)
-                mount    = "$($disk.DeviceID)\"
+    try {
+        $disks = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" -OperationTimeoutSec $CimTimeoutSec
+        foreach ($disk in $disks) {
+            $size = $disk.Size
+            $free = $disk.FreeSpace
+            if ($size -gt 0) {
+                $used = $size - $free
+                $pct = [math]::Round(($used / $size) * 100, 2)
+                $diskPartitionsList += @{
+                    device   = $disk.DeviceID
+                    total    = ("{0:N1}G" -f ($size / 1GB))
+                    used     = ("{0:N1}G" -f ($used / 1GB))
+                    avail    = ("{0:N1}G" -f ($free / 1GB))
+                    use_pct  = ("{0}%" -f $pct)
+                    mount    = "$($disk.DeviceID)\"
+                }
             }
         }
+    }
+    catch {
+        Write-GiipLog "WARN" "[CollectEnhancedMetrics] Section 'disk_usage_partition' failed, skipped: $_"
     }
 
     # 4. io_statistics
-    $pDisks = Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk | Where-Object { $_.Name -ne "_Total" }
-    $ioStatsList = @()
-    foreach ($pd in $pDisks) {
-        $ioStatsList += @{
-            device     = $pd.Name
-            tps        = [double]$pd.DiskTransfersPerSec
-            read_kb_s  = [math]::Round($pd.DiskReadBytesPerSec / 1KB, 2)
-            write_kb_s = [math]::Round($pd.DiskWriteBytesPerSec / 1KB, 2)
-            avg_wait   = [math]::Round($pd.AverageDiskSecPerTransfer * 1000, 2)
+    try {
+        $pDisks = Get-CimInstance Win32_PerfFormattedData_PerfDisk_PhysicalDisk -OperationTimeoutSec $CimTimeoutSec | Where-Object { $_.Name -ne "_Total" }
+        foreach ($pd in $pDisks) {
+            $ioStatsList += @{
+                device     = $pd.Name
+                tps        = [double]$pd.DiskTransfersPerSec
+                read_kb_s  = [math]::Round($pd.DiskReadBytesPerSec / 1KB, 2)
+                write_kb_s = [math]::Round($pd.DiskWriteBytesPerSec / 1KB, 2)
+                avg_wait   = [math]::Round($pd.AverageDiskSecPerTransfer * 1000, 2)
+            }
         }
+    }
+    catch {
+        Write-GiipLog "WARN" "[CollectEnhancedMetrics] Section 'io_statistics' failed, skipped: $_"
     }
 
     # 5. network_traffic
-    $netAdapters = Get-NetAdapterStatistics -ErrorAction SilentlyContinue
-    $netTrafficList = @()
-    if ($netAdapters) {
-        foreach ($na in $netAdapters) {
-            $rxPackets = if ($null -ne $na.ReceivedPackets) { [double]$na.ReceivedPackets } else { 0.0 }
-            $txPackets = if ($null -ne $na.SentPackets) { [double]$na.SentPackets } else { 0.0 }
-            $netTrafficList += @{
-                interface   = $na.Name
-                rx_bytes    = [double]$na.ReceivedBytes
-                tx_bytes    = [double]$na.SentBytes
-                rx_packets  = $rxPackets
-                tx_packets  = $txPackets
+    try {
+        # Get-NetAdapterStatistics is missing on some Windows builds: fall back
+        # to the CIM counter class instead of losing the whole section.
+        $netAdapters = @()
+        try {
+            $netAdapters = @(Get-NetAdapterStatistics -ErrorAction SilentlyContinue)
+        }
+        catch {
+            Write-GiipLog "WARN" "[CollectEnhancedMetrics] Get-NetAdapterStatistics failed, using CIM fallback: $_"
+        }
+        if ($netAdapters.Count -gt 0) {
+            foreach ($na in $netAdapters) {
+                $rxPackets = if ($null -ne $na.ReceivedPackets) { [double]$na.ReceivedPackets } else { 0.0 }
+                $txPackets = if ($null -ne $na.SentPackets) { [double]$na.SentPackets } else { 0.0 }
+                $netTrafficList += @{
+                    interface   = $na.Name
+                    rx_bytes    = [double]$na.ReceivedBytes
+                    tx_bytes    = [double]$na.SentBytes
+                    rx_packets  = $rxPackets
+                    tx_packets  = $txPackets
+                }
+            }
+        } else {
+            $wmiNet = Get-CimInstance Win32_PerfRawData_Tcpip_NetworkInterface -OperationTimeoutSec $CimTimeoutSec
+            foreach ($wn in $wmiNet) {
+                $netTrafficList += @{
+                    interface   = $wn.Name
+                    rx_bytes    = [double]$wn.BytesReceivedPersec
+                    tx_bytes    = [double]$wn.BytesSentPersec
+                    rx_packets  = [double]$wn.PacketsReceivedPersec
+                    tx_packets  = [double]$wn.PacketsSentPersec
+                }
             }
         }
-    } else {
-        $wmiNet = Get-CimInstance Win32_PerfRawData_Tcpip_NetworkInterface
-        foreach ($wn in $wmiNet) {
-            $netTrafficList += @{
-                interface   = $wn.Name
-                rx_bytes    = [double]$wn.BytesReceivedPersec
-                tx_bytes    = [double]$wn.BytesSentPersec
-                rx_packets  = [double]$wn.PacketsReceivedPersec
-                tx_packets  = [double]$wn.PacketsSentPersec
-            }
-        }
+    }
+    catch {
+        Write-GiipLog "WARN" "[CollectEnhancedMetrics] Section 'network_traffic' failed, skipped: $_"
     }
 
     # 6. top_processes
-    $perfProcs = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | 
+    try {
+        $perfProcs = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -OperationTimeoutSec $CimTimeoutSec | 
                  Where-Object { $_.Name -notmatch "_Total|Idle" } | 
                  Sort-Object -Property PercentProcessorTime -Descending | 
                  Select-Object -First 10
-    $topProcsList = @()
-    foreach ($pp in $perfProcs) {
-        $topProcsList += @{
-            pid      = [int]$pp.IDProcess
-            ppid     = [int]$pp.CreatingProcessID
-            cpu_pct  = [double]$pp.PercentProcessorTime
-            mem_pct  = [math]::Round(([double]$pp.WorkingSetPrivate / $totalMem) * 100, 2)
-            cmd      = $pp.Name
+        foreach ($pp in $perfProcs) {
+            # mem_pct needs the total physical memory. If the memory section
+            # was skipped there is no denominator, so report 0 instead of
+            # dividing by zero (that would take this section down as well).
+            $memPct = 0.0
+            if ($totalMem -gt 0) { $memPct = [math]::Round(([double]$pp.WorkingSetPrivate / $totalMem) * 100, 2) }
+            $topProcsList += @{
+                pid      = [int]$pp.IDProcess
+                ppid     = [int]$pp.CreatingProcessID
+                cpu_pct  = [double]$pp.PercentProcessorTime
+                mem_pct  = $memPct
+                cmd      = $pp.Name
+            }
         }
+    }
+    catch {
+        Write-GiipLog "WARN" "[CollectEnhancedMetrics] Section 'top_processes' failed, skipped: $_"
     }
 
     # 6-2. top_mem_processes
-    $perfMemProcs = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | 
+    try {
+        $perfMemProcs = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -OperationTimeoutSec $CimTimeoutSec | 
                      Where-Object { $_.Name -notmatch "_Total|Idle" } | 
                      Sort-Object -Property WorkingSetPrivate -Descending | 
                      Select-Object -First 10
-    $topMemProcsList = @()
-    foreach ($pp in $perfMemProcs) {
-        $topMemProcsList += @{
-            pid      = [int]$pp.IDProcess
-            ppid     = [int]$pp.CreatingProcessID
-            cpu_pct  = [double]$pp.PercentProcessorTime
-            mem_pct  = [math]::Round(([double]$pp.WorkingSetPrivate / $totalMem) * 100, 2)
-            cmd      = $pp.Name
+        foreach ($pp in $perfMemProcs) {
+            $memPct = 0.0
+            if ($totalMem -gt 0) { $memPct = [math]::Round(([double]$pp.WorkingSetPrivate / $totalMem) * 100, 2) }
+            $topMemProcsList += @{
+                pid      = [int]$pp.IDProcess
+                ppid     = [int]$pp.CreatingProcessID
+                cpu_pct  = [double]$pp.PercentProcessorTime
+                mem_pct  = $memPct
+                cmd      = $pp.Name
+            }
         }
+    }
+    catch {
+        Write-GiipLog "WARN" "[CollectEnhancedMetrics] Section 'top_mem_processes' failed, skipped: $_"
     }
 
     # 7. Dashboard Compatibility Top-level Fields
-    $cpuUsage = [math]::Round(100.0 - [double]$cpu.PercentIdleTime, 2)
-    if ($cpuUsage -lt 0) { $cpuUsage = 0.0 }
+    # Every value below is derived from the section above, so it degrades to a
+    # neutral default when that section was skipped.
+    $cpuUsage = 0.0
+    if ($cpu) {
+        $cpuUsage = [math]::Round(100.0 - [double]$cpu.PercentIdleTime, 2)
+        if ($cpuUsage -lt 0) { $cpuUsage = 0.0 }
+    }
 
-    $cpuCores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfCores -Sum).Sum
-    if (-not $cpuCores) { $cpuCores = 1 }
+    $cpuCores = 1
+    try {
+        $coreSum = (Get-CimInstance Win32_Processor -OperationTimeoutSec $CimTimeoutSec | Measure-Object -Property NumberOfCores -Sum).Sum
+        if ($coreSum) { $cpuCores = $coreSum }
+    }
+    catch {
+        Write-GiipLog "WARN" "[CollectEnhancedMetrics] Section 'cpu_cores' failed, skipped: $_"
+    }
 
-    $memUsage = [math]::Round(($usedMb / $totalMb) * 100, 2)
+    $memUsage = 0.0
+    if ($totalMb -gt 0) { $memUsage = [math]::Round(($usedMb / $totalMb) * 100, 2) }
 
     $systemDisk = $diskPartitionsList | Where-Object { $_.device -eq "C:" }
     if (-not $systemDisk -and $diskPartitionsList.Count -gt 0) { $systemDisk = $diskPartitionsList[0] }
@@ -239,19 +340,37 @@ try {
     try {
         $connCount = (Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue).Count
         if ($null -eq $connCount) { $connCount = 0 }
-    } catch {}
+    }
+    catch {
+        Write-GiipLog "WARN" "[CollectEnhancedMetrics] Section 'conn_count' failed, skipped: $_"
+    }
 
-    $totalProcessCount = (Get-Process).Count
+    $totalProcessCount = 0
+    try {
+        $totalProcessCount = (Get-Process).Count
+    }
+    catch {
+        Write-GiipLog "WARN" "[CollectEnhancedMetrics] Section 'total_process_count' failed, skipped: $_"
+    }
 
     $uptimeStr = "N/A"
     try {
-        $osInfo = Get-CimInstance Win32_OperatingSystem
+        $osInfo = Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec $CimTimeoutSec
         $uptimeSpan = (Get-Date) - $osInfo.LastBootUpTime
         $uptimeStr = "{0}d {1}h {2}m" -f $uptimeSpan.Days, $uptimeSpan.Hours, $uptimeSpan.Minutes
-    } catch {}
+    }
+    catch {
+        Write-GiipLog "WARN" "[CollectEnhancedMetrics] Section 'uptime' failed, skipped: $_"
+    }
 
     # Build Unified Payload
-    $buildVersion = (Get-CimInstance Win32_OperatingSystem).Version
+    $buildVersion = "N/A"
+    try {
+        $buildVersion = (Get-CimInstance Win32_OperatingSystem -OperationTimeoutSec $CimTimeoutSec).Version
+    }
+    catch {
+        Write-GiipLog "WARN" "[CollectEnhancedMetrics] Section 'build_version' failed, skipped: $_"
+    }
     $unifiedPayload = @{
         cpu_usage           = $cpuUsage
         mem_usage           = $memUsage
